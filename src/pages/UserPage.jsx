@@ -16,6 +16,7 @@ const defaultStages = [
 		actor: 'Aspirante',
 		aprobado: '',
 		tiempoMax: '',
+		orden: 1,
 	},
 	{
 		id: '2',
@@ -23,6 +24,7 @@ const defaultStages = [
 		actor: 'OAI',
 		aprobado: '',
 		tiempoMax: '',
+		orden: 2,
 	},
 	{
 		id: '3',
@@ -30,6 +32,7 @@ const defaultStages = [
 		actor: 'Unidad Academica',
 		aprobado: '',
 		tiempoMax: '',
+		orden: 3,
 	},
 	{
 		id: '4',
@@ -37,6 +40,7 @@ const defaultStages = [
 		actor: 'Sistema',
 		aprobado: '',
 		tiempoMax: '',
+		orden: 4,
 	},
 ]
 
@@ -51,8 +55,8 @@ const parseStage = (row, index) => ({
 	id: String(pickValue(row, ['id'], 0) ?? index + 1),
 	nombre: String(pickValue(row, ['nombre', 'etapa'], 1) ?? `Etapa ${index + 1}`),
 	actor: String(pickValue(row, ['actor'], 2) ?? ''),
-	aprobado: String(pickValue(row, ['aprobado'], 3) ?? ''),
-	tiempoMax: String(pickValue(row, ['tiempo_max', 'tiempomax'], 4) ?? ''),
+	tiempoMax: String(pickValue(row, ['tiempo_max', 'tiempomax'], 3) ?? ''),
+	orden: Number(pickValue(row, ['orden', 'order'], 4) ?? index + 1),
 })
 
 const parseUsuario = (row, index) => ({
@@ -66,12 +70,18 @@ const parseUsuario = (row, index) => ({
 const parseRegistro = (row, index) => ({
 	id: String(pickValue(row, ['id'], 0) ?? `REG-${index + 1}`),
 	timestamp: String(pickValue(row, ['timestamp', 'fecha'], 1) ?? ''),
-	idUsuario: String(pickValue(row, ['id_usuario', 'usuario', 'correo'], 2) ?? ''),
+	idUsuario: String(pickValue(row, ['id_usuario', 'usuario'], 2) ?? ''),
 	idEtapa: String(pickValue(row, ['id_etapa', 'etapa'], 3) ?? ''),
-	idSolicitud: String(pickValue(row, ['id_solicitud', 'solicitud'], 4) ?? ''),
-	observacion: String(pickValue(row, ['observacion', 'comentario'], 5) ?? ''),
-	aprobado: String(pickValue(row, ['aprobado'], 6) ?? ''),
-	urlDocumento: String(pickValue(row, ['url', 'url_documento'], 7) ?? ''),
+	observacion: String(pickValue(row, ['observacion', 'comentario'], 4) ?? ''),
+	aprobado: String(pickValue(row, ['aprobado'], 5) ?? ''),
+	urlDocumento: String(pickValue(row, ['url', 'url_documento'], 6) ?? ''),
+})
+
+const parseSolicitud = (row, index) => ({
+	id: String(pickValue(row, ['id'], 0) ?? index + 1),
+	idUsuario: String(pickValue(row, ['id_usuario', 'usuario'], 1) ?? ''),
+	etapaActual: String(pickValue(row, ['etapa_actual', 'etapa'], 2) ?? ''),
+	fecha: String(pickValue(row, ['fecha'], 3) ?? ''),
 })
 
 const idToNumber = (value) => {
@@ -127,7 +137,9 @@ const mergeStages = (sheetRows) => {
 	const merged = defaultStages.map((stage) => ({ ...stage }))
 
 	parsedStages.forEach((sheetStage, index) => {
-		const existingIndex = merged.findIndex((stage) => stage.id === sheetStage.id)
+		const existingIndex = merged.findIndex(
+			(stage) => Number(stage.orden) === Number(sheetStage.orden),
+		)
 
 		if (existingIndex >= 0) {
 			merged[existingIndex] = {
@@ -161,13 +173,14 @@ const UserPage = () => {
 	const [myRequests, setMyRequests] = useState([])
 	const [firstStageRequest, setFirstStageRequest] = useState(null)
 	const [userSheet, setUserSheet] = useState(null)
+	const [solicitudActual, setSolicitudActual] = useState(null)
 	const [loading, setLoading] = useState(true)
 	const [formLoading, setFormLoading] = useState(false)
 	const [error, setError] = useState('')
 	const [formMessage, setFormMessage] = useState('')
 	const [formData, setFormData] = useState({ observacion: '', urlDocumento: '' })
 
-	const firstStageId = useMemo(() => stages[0]?.id ?? '1', [stages])
+	const firstStageOrder = useMemo(() => stages[0]?.orden ?? 1, [stages])
 
 	const hydrateFromSheets = useCallback(
 		(sheetMap) => {
@@ -190,7 +203,9 @@ const UserPage = () => {
 			}
 
 			const registrosRows = getSheetRows(sheetMap, 'REGISTROS', ['registros'])
+			const solicitudesRows = getSheetRows(sheetMap, 'SOLICITUDES', ['solicitudes'])
 			const parsedRegistros = registrosRows.map(parseRegistro)
+			const parsedSolicitudes = solicitudesRows.map(parseSolicitud)
 			const ownRegistros = foundUser
 				? parsedRegistros.filter(
 						(registro) => String(registro.idUsuario) === String(foundUser.id),
@@ -200,11 +215,21 @@ const UserPage = () => {
 			ownRegistros.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
 			setMyRequests(ownRegistros)
 
-			const currentFirstStageId = mergedStages[0]?.id ?? '1'
+			const currentFirstStageId = String(mergedStages[0]?.orden ?? 1)
 			const latestFirstStageRequest = ownRegistros.find(
 				(request) => String(request.idEtapa) === String(currentFirstStageId),
 			)
 			setFirstStageRequest(latestFirstStageRequest ?? null)
+
+			const userSolicitud = foundUser
+				? parsedSolicitudes
+						.filter(
+							(solicitud) => String(solicitud.idUsuario) === String(foundUser.id),
+						)
+						.sort((a, b) => idToNumber(b.id) - idToNumber(a.id))[0]
+				: null
+
+			setSolicitudActual(userSolicitud ?? null)
 		},
 		[auth.user?.email, updateAuthUser],
 	)
@@ -272,6 +297,7 @@ const UserPage = () => {
 			const sheetMap = await apiGetAllSheets(auth.token)
 			const usersRows = getSheetRows(sheetMap, 'USUARIOS', ['usuarios'])
 			const registrosRows = getSheetRows(sheetMap, 'REGISTROS', ['registros'])
+			const solicitudesRows = getSheetRows(sheetMap, 'SOLICITUDES', ['solicitudes'])
 
 			let currentUser = findUserByEmail(usersRows, auth.user?.email)
 
@@ -304,7 +330,22 @@ const UserPage = () => {
 			}
 
 			const nextRegistroId = getNextId(registrosRows)
+			const nextSolicitudId = getNextId(solicitudesRows)
 			const currentTimestamp = new Date().toISOString()
+			const currentDate = currentTimestamp.slice(0, 10)
+
+			await apiPost(
+				'/api/sheets/SOLICITUDES/rows',
+				{
+					values: [
+						nextSolicitudId,
+						String(currentUser.id),
+						String(firstStageOrder),
+						currentDate,
+					],
+				},
+				auth.token,
+			)
 
 			await apiPost(
 				'/api/sheets/REGISTROS/rows',
@@ -313,10 +354,9 @@ const UserPage = () => {
 						nextRegistroId,
 						currentTimestamp,
 						String(currentUser.id),
-						firstStageId,
-						'',
+						String(firstStageOrder),
 						cleanObservation,
-						'FALSE',
+						false,
 						cleanUrl,
 					],
 				},
@@ -415,7 +455,8 @@ const UserPage = () => {
 									) : enabled && firstStageRequest ? (
 										<div className="request-summary">
 											<p>
-												<strong>Solicitud creada:</strong> {formatRequestDate(firstStageRequest.timestamp)}
+												<strong>Solicitud creada:</strong>{' '}
+												{formatRequestDate(firstStageRequest.timestamp)}
 											</p>
 											<p>
 												<strong>Observacion:</strong>{' '}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
 	apiGetAllSheets,
+	apiPatch,
 	getSheetRows,
 	isUnauthorizedError,
 	pickValue,
@@ -9,15 +10,18 @@ import {
 import { useAuth } from '../context/AuthContext'
 
 const defaultStages = [
-	{ id: '1', nombre: 'Formulario de Postulacion' },
-	{ id: '2', nombre: 'Formulario OAI' },
-	{ id: '3', nombre: 'Unidad Academica' },
-	{ id: '4', nombre: 'Cierre del proceso' },
+	{ id: '1', nombre: 'Formulario de Postulacion', orden: 1 },
+	{ id: '2', nombre: 'Formulario OAI', orden: 2 },
+	{ id: '3', nombre: 'Unidad Academica', orden: 3 },
+	{ id: '4', nombre: 'Cierre del proceso', orden: 4 },
 ]
 
 const parseStage = (row, index) => ({
 	id: String(pickValue(row, ['id', 'id_etapa'], 0) ?? index + 1),
 	nombre: String(pickValue(row, ['nombre', 'etapa'], 1) ?? `Etapa ${index + 1}`),
+	actor: String(pickValue(row, ['actor'], 2) ?? ''),
+	tiempoMax: String(pickValue(row, ['tiempo_max', 'tiempomax'], 3) ?? ''),
+	orden: Number(pickValue(row, ['orden', 'order'], 4) ?? index + 1),
 })
 
 const parseRegistro = (row, index) => ({
@@ -25,17 +29,16 @@ const parseRegistro = (row, index) => ({
 	timestamp: String(pickValue(row, ['timestamp', 'fecha'], 1) ?? ''),
 	idUsuario: String(pickValue(row, ['id_usuario', 'usuario', 'correo'], 2) ?? ''),
 	idEtapa: String(pickValue(row, ['id_etapa', 'etapa'], 3) ?? ''),
-	idSolicitud: String(pickValue(row, ['id_solicitud', 'solicitud'], 4) ?? ''),
-	observacion: String(pickValue(row, ['observacion', 'comentario'], 5) ?? ''),
-	aprobado: String(pickValue(row, ['aprobado'], 6) ?? ''),
+	observacion: String(pickValue(row, ['observacion', 'comentario'], 4) ?? ''),
+	aprobado: String(pickValue(row, ['aprobado'], 5) ?? ''),
+	url: String(pickValue(row, ['url', 'url_documento'], 6) ?? ''),
 })
 
 const parseSolicitud = (row, index) => ({
 	id: String(pickValue(row, ['id', 'id_solicitud'], 0) ?? `SOL-${index + 1}`),
 	idUsuario: String(pickValue(row, ['id_usuario', 'usuario'], 1) ?? ''),
-	idEtapaActual: String(
-		pickValue(row, ['id_etapa_actual', 'id_etapa', 'etapa'], 2) ?? '1',
-	),
+	etapaActual: String(pickValue(row, ['etapa_actual', 'etapa'], 2) ?? ''),
+	fecha: String(pickValue(row, ['fecha'], 3) ?? ''),
 })
 
 const parseUsuario = (row, index) => {
@@ -50,10 +53,26 @@ const parseUsuario = (row, index) => {
 	}
 }
 
+const idToNumber = (value) => {
+	const matches = String(value ?? '').match(/\d+/g)
+	if (!matches || matches.length === 0) return 0
+	const candidate = Number(matches[matches.length - 1])
+	return Number.isFinite(candidate) ? candidate : 0
+}
+
+const formatDate = (timestamp) => {
+	const date = new Date(timestamp)
+	if (Number.isNaN(date.getTime())) return timestamp || '-'
+	return date.toLocaleDateString('es-CO')
+}
+
 const AdminDashboard = () => {
 	const navigate = useNavigate()
 	const { auth, logout } = useAuth()
-	const [groups, setGroups] = useState([])
+	const [records, setRecords] = useState([])
+	const [stages, setStages] = useState(defaultStages)
+	const [selectedRecord, setSelectedRecord] = useState(null)
+	const [selectedFlow, setSelectedFlow] = useState([])
 	const [loading, setLoading] = useState(true)
 	const [error, setError] = useState('')
 
@@ -77,6 +96,12 @@ const AdminDashboard = () => {
 				parseUsuario,
 			)
 
+			const orderedStages = (steps.length > 0 ? steps : defaultStages)
+				.map((stage) => ({ ...stage }))
+				.sort((a, b) => Number(a.orden) - Number(b.orden))
+
+			setStages(orderedStages)
+
 			const usersByKey = new Map()
 			usuarios.forEach((user) => {
 				const label = user.nombreCompleto || user.correo || `Usuario ${user.id}`
@@ -84,64 +109,33 @@ const AdminDashboard = () => {
 				usersByKey.set(user.correo.toLowerCase(), label)
 			})
 
-			const grouped = (steps.length > 0 ? steps : defaultStages).map((stage) => ({
-				...stage,
-				items: [],
-			}))
-
-			const stageIndexById = new Map(
-				grouped.map((stage, index) => [stage.id, index]),
-			)
-
-			registros.forEach((registro) => {
-				const targetIndex = stageIndexById.get(registro.idEtapa)
-				if (targetIndex === undefined) return
-
-				grouped[targetIndex].items.push({
-					type: 'registro',
-					id: registro.id,
-					timestamp: registro.timestamp,
-					userLabel:
-						usersByKey.get(registro.idUsuario) ||
-						usersByKey.get(registro.idUsuario.toLowerCase()) ||
-						registro.idUsuario ||
-						'Sin usuario',
-					idSolicitud: registro.idSolicitud,
-					observacion: registro.observacion,
-					aprobado: registro.aprobado,
-				})
-			})
-
+			const latestSolicitudByUser = new Map()
 			solicitudes.forEach((solicitud) => {
-				const targetIndex = stageIndexById.get(solicitud.idEtapaActual)
-				if (targetIndex === undefined) return
-
-				const alreadyTracked = grouped[targetIndex].items.some(
-					(item) => item.idSolicitud === solicitud.id,
-				)
-
-				if (!alreadyTracked) {
-					grouped[targetIndex].items.push({
-						type: 'solicitud',
-						id: `S-${solicitud.id}`,
-						timestamp: '',
-						userLabel:
-							usersByKey.get(solicitud.idUsuario) ||
-							usersByKey.get(solicitud.idUsuario.toLowerCase()) ||
-							solicitud.idUsuario ||
-							'Sin usuario',
-						idSolicitud: solicitud.id,
-						observacion: 'Sin registro asociado en la etapa actual.',
-						aprobado: '',
-					})
+				const existing = latestSolicitudByUser.get(solicitud.idUsuario)
+				if (!existing || idToNumber(solicitud.id) > idToNumber(existing.id)) {
+					latestSolicitudByUser.set(solicitud.idUsuario, solicitud)
 				}
 			})
 
-			grouped.forEach((group) => {
-				group.items.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-			})
+			const recordList = registros
+				.map((registro) => {
+					const solicitud = latestSolicitudByUser.get(registro.idUsuario) || null
+					return {
+						...registro,
+						dateLabel: formatDate(registro.timestamp),
+						userLabel:
+							usersByKey.get(registro.idUsuario) ||
+							usersByKey.get(registro.idUsuario.toLowerCase()) ||
+							registro.idUsuario ||
+							'Sin usuario',
+						solicitudId: solicitud?.id ?? null,
+						solicitudEtapaActual: solicitud?.etapaActual ?? null,
+						solicitudFecha: solicitud?.fecha ?? null,
+					}
+				})
+				.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
 
-			setGroups(grouped)
+			setRecords(recordList)
 		} catch (loadError) {
 			if (isUnauthorizedError(loadError)) {
 				logout()
@@ -149,7 +143,7 @@ const AdminDashboard = () => {
 				return
 			}
 
-			setGroups((defaultStages || []).map((stage) => ({ ...stage, items: [] })))
+			setRecords([])
 			setError('No se pudo cargar la informacion del dashboard.')
 		}
 
@@ -173,25 +167,133 @@ const AdminDashboard = () => {
 		}
 	}, [loadDashboard])
 
-	const totalRequests = useMemo(
-		() => groups.reduce((acc, group) => acc + group.items.length, 0),
-		[groups],
+	const totalRequests = records.length
+	const totalStages = stages.length
+
+	const groupedRecords = useMemo(() => {
+		return stages
+			.map((stage) => ({
+				...stage,
+				items: records
+					.filter(
+						(record) => String(record.idEtapa) === String(stage.orden),
+					)
+					.sort((a, b) => b.timestamp.localeCompare(a.timestamp)),
+			}))
+	}, [records, stages])
+
+	const openFlow = useCallback(
+		(record) => {
+			const flowRecords = records.filter(
+				(item) => String(item.idUsuario) === String(record.idUsuario),
+			)
+
+			const flow = stages.map((stage) => {
+				const matching = flowRecords.find(
+					(item) => String(item.idEtapa) === String(stage.orden),
+				)
+				return { stage, registro: matching ?? null }
+			})
+
+			setSelectedRecord(record)
+			setSelectedFlow(flow)
+		},
+		[records, stages],
 	)
+
+	const closeFlow = () => {
+		setSelectedRecord(null)
+		setSelectedFlow([])
+	}
+
+	const approveRecord = async (record) => {
+		if (!record.solicitudId) return
+		const currentEtapa = Number(record.idEtapa)
+		const maxOrden = Math.max(...stages.map((stage) => Number(stage.orden || 0)))
+		const nextEtapa = Math.min(currentEtapa + 1, maxOrden)
+		const fecha = new Date().toISOString().slice(0, 10)
+
+		await apiPatch(
+			`/api/sheets/registros/${record.solicitudId}/etapas/${record.idEtapa}/aprobado`,
+			{ aprobado: true },
+			auth.token,
+		)
+
+		await apiPatch(
+			`/api/sheets/solicitudes/${record.solicitudId}/etapa`,
+			{ etapa_actual: nextEtapa, fecha },
+			auth.token,
+		)
+
+		const sheetMap = await apiGetAllSheets(auth.token)
+		const steps = getSheetRows(sheetMap, 'CONVENIOS_ETAPAS', [
+			'convenios_etapas',
+			'etapas',
+		]).map(parseStage)
+		setStages(steps.length > 0 ? steps : defaultStages)
+
+		const registros = getSheetRows(sheetMap, 'REGISTROS', ['registros']).map(
+			parseRegistro,
+		)
+		const solicitudes = getSheetRows(sheetMap, 'SOLICITUDES', [
+			'solicitudes',
+		]).map(parseSolicitud)
+		const usuarios = getSheetRows(sheetMap, 'USUARIOS', ['usuarios']).map(
+			parseUsuario,
+		)
+
+		const usersByKey = new Map()
+		usuarios.forEach((user) => {
+			const label = user.nombreCompleto || user.correo || `Usuario ${user.id}`
+			usersByKey.set(user.id, label)
+			usersByKey.set(user.correo.toLowerCase(), label)
+		})
+
+		const latestSolicitudByUser = new Map()
+		solicitudes.forEach((solicitud) => {
+			const existing = latestSolicitudByUser.get(solicitud.idUsuario)
+			if (!existing || idToNumber(solicitud.id) > idToNumber(existing.id)) {
+				latestSolicitudByUser.set(solicitud.idUsuario, solicitud)
+			}
+		})
+
+		const recordList = registros
+			.map((registro) => {
+				const solicitud = latestSolicitudByUser.get(registro.idUsuario) || null
+				return {
+					...registro,
+					dateLabel: formatDate(registro.timestamp),
+					userLabel:
+						usersByKey.get(registro.idUsuario) ||
+						usersByKey.get(registro.idUsuario.toLowerCase()) ||
+						registro.idUsuario ||
+						'Sin usuario',
+						solicitudId: solicitud?.id ?? null,
+						solicitudEtapaActual: solicitud?.etapaActual ?? null,
+						solicitudFecha: solicitud?.fecha ?? null,
+					}
+				})
+			.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+
+		setRecords(recordList)
+		if (selectedRecord && selectedRecord.id === record.id) {
+			openFlow({ ...record, aprobado: 'TRUE' })
+		}
+	}
 
 	return (
 		<section className="admin-page">
 			<div className="page-intro">
 				<h2>Dashboard Administrativo</h2>
 				<p>
-					Visualiza las solicitudes por etapa en desplegables, con timestamp y
-					usuario que registro el movimiento.
+					Registros por usuario con control de aprobacion y seguimiento de flujo.
 				</p>
 			</div>
 
 			<div className="admin-kpis">
 				<article>
 					<span>Total etapas</span>
-					<strong>{groups.length}</strong>
+					<strong>{totalStages}</strong>
 				</article>
 				<article>
 					<span>Total solicitudes</span>
@@ -207,7 +309,7 @@ const AdminDashboard = () => {
 				</div>
 			) : (
 				<div className="admin-groups">
-					{groups.map((group, index) => (
+					{groupedRecords.map((group, index) => (
 						<details key={group.id} className="admin-group" open={index === 0}>
 							<summary>
 								<span>{group.nombre}</span>
@@ -216,21 +318,36 @@ const AdminDashboard = () => {
 
 							<div className="admin-items">
 								{group.items.length === 0 ? (
-									<p className="empty-state">No hay solicitudes en esta etapa.</p>
+									<p className="empty-state">No hay registros en esta etapa.</p>
 								) : (
-									group.items.map((item) => (
-										<article key={item.id} className="admin-item-card">
-											<div className="admin-item-head">
-												<strong>{item.id || 'Sin solicitud'}</strong>
-												<span>{item.timestamp || 'Sin timestamp'}</span>
+									group.items.map((record) => (
+										<article
+											key={`${group.orden}-${record.id}`}
+											className="admin-record-item"
+										>
+											<button
+												type="button"
+												className="admin-record-link"
+												onClick={() => openFlow(record)}
+											>
+												<span className="record-id">{record.id}</span>
+												<span className="record-date">{record.dateLabel}</span>
+												<span className="record-user">{record.userLabel}</span>
+											</button>
+											<div className="admin-actions">
+												<button
+													type="button"
+													className="record-approve-btn"
+													disabled={
+														String(record.aprobado).toLowerCase() === 'true'
+													}
+													onClick={() => approveRecord(record)}
+												>
+													{String(record.aprobado).toLowerCase() === 'true'
+														? 'Aprobado'
+														: 'Aprobar'}
+												</button>
 											</div>
-
-											<p>Usuario: {item.userLabel}</p>
-											<p>Observacion: {item.observacion || 'Sin observacion'}</p>
-											<p>
-												Aprobado:{' '}
-												{item.aprobado ? String(item.aprobado) : 'Sin definir'}
-											</p>
 										</article>
 									))
 								)}
@@ -239,6 +356,80 @@ const AdminDashboard = () => {
 					))}
 				</div>
 			)}
+
+			{selectedRecord ? (
+				<div className="modal-backdrop" onClick={closeFlow}>
+					<div className="modal" onClick={(event) => event.stopPropagation()}>
+						<div className="modal-header">
+							<div>
+								<h3>Flujo de solicitud</h3>
+								<p>
+									Registro: {selectedRecord.id} | {selectedRecord.userLabel}
+								</p>
+							</div>
+							<button type="button" className="modal-close" onClick={closeFlow}>
+								Cerrar
+							</button>
+						</div>
+						<div className="modal-body">
+							<div className="timeline">
+								{selectedFlow.map(({ stage, registro }, index) => {
+									const enabled = true
+									const sideClass = index % 2 === 0 ? 'left' : 'right'
+
+									return (
+										<article
+											key={`${stage.id}-${index}`}
+											className={`timeline-item ${sideClass} ${enabled ? 'enabled' : 'disabled'}`}
+										>
+											<div className="timeline-node">{stage.orden}</div>
+											<div className="timeline-card">
+												<h3>{stage.nombre}</h3>
+												<p className="timeline-meta">
+													Actor: <strong>{stage.actor || 'Sin definir'}</strong>
+												</p>
+												{stage.tiempoMax ? (
+													<p className="timeline-meta">
+														Tiempo maximo: <strong>{stage.tiempoMax} dias</strong>
+													</p>
+												) : null}
+												{registro ? (
+													<div className="request-summary">
+														<p>
+															<strong>Fecha:</strong> {formatDate(registro.timestamp)}
+														</p>
+														<p>
+															<strong>Observacion:</strong>{' '}
+															{registro.observacion || '-'}
+														</p>
+														<p>
+															<strong>Aprobado:</strong>{' '}
+															{String(registro.aprobado).toLowerCase() === 'true'
+																? 'Si'
+																: 'No'}
+														</p>
+														{registro.url ? (
+															<p>
+																<a href={registro.url} target="_blank" rel="noreferrer">
+																	Ver documento
+																</a>
+															</p>
+														) : null}
+													</div>
+												) : (
+													<p className="disabled-note">
+														No hay registro en esta etapa.
+													</p>
+												)}
+											</div>
+										</article>
+									)
+								})}
+							</div>
+						</div>
+					</div>
+				</div>
+			) : null}
 		</section>
 	)
 }

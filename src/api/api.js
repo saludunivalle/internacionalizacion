@@ -68,6 +68,9 @@ export const apiGet = (path, token, config = {}) =>
 export const apiPost = (path, body, token, config = {}) =>
 	apiPublic.post(path, body, getAuthConfig(token, config))
 
+export const apiPatch = (path, body, token, config = {}) =>
+	apiPublic.patch(path, body, getAuthConfig(token, config))
+
 export const extractSheetMap = (payload) => {
 	const map = {}
 	const visited = new Set()
