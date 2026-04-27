@@ -221,7 +221,7 @@ const AdminDashboard = () => {
 									group.items.map((item) => (
 										<article key={item.id} className="admin-item-card">
 											<div className="admin-item-head">
-												<strong>{item.idSolicitud || 'Sin solicitud'}</strong>
+												<strong>{item.id || 'Sin solicitud'}</strong>
 												<span>{item.timestamp || 'Sin timestamp'}</span>
 											</div>
 
