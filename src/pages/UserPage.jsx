@@ -115,21 +115,17 @@ const findUserByEmail = (rows, email) => {
 }
 
 const splitUserName = (fullName) => {
-	const tokens = String(fullName ?? '')
-		.trim()
-		.split(/\s+/)
-		.filter(Boolean)
+	const partes = fullName.trim().split(/\s+/);
 
-	if (tokens.length === 0) {
-		return { nombres: '', apellidos: '' }
-	}
+  if (partes.length < 2) {
+    return { nombres: fullName, apellidos: '' };
+  }
 
-	if (tokens.length === 1) {
-		return { nombres: tokens[0], apellidos: '' }
-	}
+  // Últimos dos = apellidos (caso común en LatAm)
+  const apellidos = partes.slice(-2).join(' ');
+  const nombres = partes.slice(0, -2).join(' ');
 
-	const [firstName, ...lastNameParts] = tokens
-	return { nombres: firstName, apellidos: lastNameParts.join(' ') }
+  return { nombres, apellidos };
 }
 
 const mergeStages = (sheetRows) => {
@@ -179,6 +175,8 @@ const UserPage = () => {
 	const [error, setError] = useState('')
 	const [formMessage, setFormMessage] = useState('')
 	const [formData, setFormData] = useState({ observacion: '', urlDocumento: '' })
+
+	//console.log('name', auth.user , 'other name', auth.user?.given_name, auth.user?.family_name)
 
 	const firstStageOrder = useMemo(() => stages[0]?.orden ?? 1, [stages])
 
@@ -332,8 +330,8 @@ const UserPage = () => {
 			const nextRegistroId = getNextId(registrosRows)
 			const nextSolicitudId = getNextId(solicitudesRows)
 			const currentTimestamp = new Date().toISOString()
-			const currentDate = currentTimestamp.slice(0, 10)
-
+			const currentDate = new Date().toISOString().slice(0, 10)
+			console.log('currentDate', currentDate)
 			await apiPost(
 				'/api/sheets/SOLICITUDES/rows',
 				{
@@ -491,7 +489,7 @@ const UserPage = () => {
 					})}
 				</div>
 			)}
-
+{/** 
 			<section className="my-requests">
 				<h3>Mis Registros</h3>
 				{userSheet ? (
@@ -521,7 +519,7 @@ const UserPage = () => {
 					</div>
 				)}
 			</section>
-
+*/}
 			{formMessage ? <p className="message info">{formMessage}</p> : null}
 		</section>
 	)
