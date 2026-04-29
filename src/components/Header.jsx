@@ -15,7 +15,7 @@ const Header = ({ user, onLogout }) => {
 			</div>
 
 			<div className="header-center">
-				<h1 className="header-title">Intercionalizacion - OAI</h1>
+				<h1 className="header-title">Procesos de Convenios - OAI</h1>
 				{subtitle ? <p className="header-subtitle">{subtitle}</p> : null}
 			</div>
 
