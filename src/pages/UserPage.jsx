@@ -577,7 +577,9 @@ const UserPage = () => {
 			) : null}
 
 			{userSheet ? (
-				<p className="timeline-meta">ID de usuario: {userSheet.id}</p>
+				<p className="timeline-meta">
+					Bienvenido
+				</p>
 			) : (
 				<p className="timeline-meta">
 					Aun no estas registrado en USUARIOS. Se creara el usuario cuando

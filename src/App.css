@@ -492,7 +492,7 @@
 .admin-group {
   background: #fff;
   border-radius: 12px;
-  border: 1px solid #d9d9d9;
+  border: 1.5px solid #d9d9d9;
   overflow: hidden;
 }
 
@@ -503,10 +503,11 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  border-color: #000000;
   font-family: 'Montserrat', sans-serif;
   font-weight: 700;
   color: #2d2d2d;
-  background: linear-gradient(180deg, #f8f8f8 0%, #ededed 100%);
+  background: #e0dfdf;
 }
 
 .badge-count {

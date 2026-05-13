@@ -456,7 +456,7 @@ const AdminDashboard = () => {
 							<details
 								key={group.id}
 								className="admin-group"
-								open={index === 0}
+								open={false}
 							>
 								<summary>
 									<span>{group.nombre}</span>
