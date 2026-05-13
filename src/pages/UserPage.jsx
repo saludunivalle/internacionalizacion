@@ -9,54 +9,32 @@ import {
 } from '../api/api'
 import { useAuth } from '../context/AuthContext'
 
-const defaultStages = [
-	{
-		id: '1',
-		nombre: 'Formulario de Postulacion',
-		actor: 'Aspirante',
-		aprobado: '',
-		tiempoMax: '',
-		orden: 1,
-	},
-	{
-		id: '2',
-		nombre: 'Formulario OAI',
-		actor: 'OAI',
-		aprobado: '',
-		tiempoMax: '',
-		orden: 2,
-	},
-	{
-		id: '3',
-		nombre: 'Unidad Academica',
-		actor: 'Unidad Academica',
-		aprobado: '',
-		tiempoMax: '',
-		orden: 3,
-	},
-	{
-		id: '4',
-		nombre: 'Cierre del proceso',
-		actor: 'Sistema',
-		aprobado: '',
-		tiempoMax: '',
-		orden: 4,
-	},
-]
-
-const stageDescriptions = [
-	'Envia los documentos listados en el paso 1 a la OAI, con 4 meses de antelacion a la fecha de inicio solicitada.',
-	'Revisa que la documentacion se encuentre completa y envia la postulacion a la unidad academica.',
-	'Revisa la disponibilidad de cupos y docente en el escenario de practica solicitado.',
-	'Consolida las validaciones y deja trazabilidad final de la solicitud.',
-]
-
-const parseStage = (row, index) => ({
+const parseProceso = (row, index) => ({
 	id: String(pickValue(row, ['id'], 0) ?? index + 1),
-	nombre: String(pickValue(row, ['nombre', 'etapa'], 1) ?? `Etapa ${index + 1}`),
-	actor: String(pickValue(row, ['actor'], 2) ?? ''),
-	tiempoMax: String(pickValue(row, ['tiempo_max', 'tiempomax'], 3) ?? ''),
-	orden: Number(pickValue(row, ['orden', 'order'], 4) ?? index + 1),
+	nombre: String(pickValue(row, ['nombre'], 1) ?? `Proceso ${index + 1}`),
+})
+
+const parseActividad = (row, index) => ({
+	id: String(pickValue(row, ['id'], 0) ?? index + 1),
+	idProceso: String(pickValue(row, ['id_proceso', 'proceso'], 1) ?? ''),
+	idAdjunto: String(pickValue(row, ['id_adjunto', 'adjunto'], 2) ?? ''),
+	nombre: String(
+		pickValue(row, ['nombre', 'actividad'], 3) ?? `Actividad ${index + 1}`,
+	),
+	tiempoMax: String(pickValue(row, ['tiempo_max', 'tiempomax'], 4) ?? ''),
+	orden: Number(pickValue(row, ['orden', 'order'], 5) ?? index + 1),
+})
+
+const parseAdjunto = (row, index) => ({
+	id: String(pickValue(row, ['id'], 0) ?? index + 1),
+	idActividad: String(pickValue(row, ['id_actividad', 'actividad'], 1) ?? ''),
+	nombre: String(pickValue(row, ['nombre'], 2) ?? `Adjunto ${index + 1}`),
+})
+
+const parseActor = (row, index) => ({
+	id: String(pickValue(row, ['id'], 0) ?? index + 1),
+	idActividad: String(pickValue(row, ['id_actividad', 'actividad'], 1) ?? ''),
+	nombre: String(pickValue(row, ['nombre', 'actor'], 2) ?? `Actor ${index + 1}`),
 })
 
 const parseUsuario = (row, index) => ({
@@ -69,19 +47,23 @@ const parseUsuario = (row, index) => ({
 
 const parseRegistro = (row, index) => ({
 	id: String(pickValue(row, ['id'], 0) ?? `REG-${index + 1}`),
-	timestamp: String(pickValue(row, ['timestamp', 'fecha'], 1) ?? ''),
-	idUsuario: String(pickValue(row, ['id_usuario', 'usuario'], 2) ?? ''),
-	idEtapa: String(pickValue(row, ['id_etapa', 'etapa'], 3) ?? ''),
-	observacion: String(pickValue(row, ['observacion', 'comentario'], 4) ?? ''),
-	aprobado: String(pickValue(row, ['aprobado'], 5) ?? ''),
-	urlDocumento: String(pickValue(row, ['url', 'url_documento'], 6) ?? ''),
+	idUsuario: String(pickValue(row, ['id_usuario', 'usuario'], 1) ?? ''),
+	idActividad: String(pickValue(row, ['id_actividad', 'actividad'], 2) ?? ''),
+	idSolicitud: String(pickValue(row, ['id_solicitud', 'solicitud'], 3) ?? ''),
+	timestamp: String(pickValue(row, ['timestamp', 'fecha'], 4) ?? ''),
+	observacion: String(pickValue(row, ['observacion', 'comentario'], 5) ?? ''),
+	aprobado: String(pickValue(row, ['aprobado'], 6) ?? ''),
+	urlDocumento: String(pickValue(row, ['url', 'url_documento'], 7) ?? ''),
 })
 
 const parseSolicitud = (row, index) => ({
 	id: String(pickValue(row, ['id'], 0) ?? index + 1),
 	idUsuario: String(pickValue(row, ['id_usuario', 'usuario'], 1) ?? ''),
-	etapaActual: String(pickValue(row, ['etapa_actual', 'etapa'], 2) ?? ''),
-	fecha: String(pickValue(row, ['fecha'], 3) ?? ''),
+	idProceso: String(pickValue(row, ['id_proceso', 'proceso'], 2) ?? ''),
+	actividadActual: String(
+		pickValue(row, ['actividad_actual', 'actividad'], 3) ?? '',
+	),
+	fecha: String(pickValue(row, ['fecha'], 4) ?? ''),
 })
 
 const idToNumber = (value) => {
@@ -115,45 +97,16 @@ const findUserByEmail = (rows, email) => {
 }
 
 const splitUserName = (fullName) => {
-	const partes = fullName.trim().split(/\s+/);
+	const partes = fullName.trim().split(/\s+/)
 
-  if (partes.length < 2) {
-    return { nombres: fullName, apellidos: '' };
-  }
+	if (partes.length < 2) {
+		return { nombres: fullName, apellidos: '' }
+	}
 
-  // Últimos dos = apellidos (caso común en LatAm)
-  const apellidos = partes.slice(-2).join(' ');
-  const nombres = partes.slice(0, -2).join(' ');
+	const apellidos = partes.slice(-2).join(' ')
+	const nombres = partes.slice(0, -2).join(' ')
 
-  return { nombres, apellidos };
-}
-
-const mergeStages = (sheetRows) => {
-	const parsedStages = sheetRows.map(parseStage)
-	const merged = defaultStages.map((stage) => ({ ...stage }))
-
-	parsedStages.forEach((sheetStage, index) => {
-		const existingIndex = merged.findIndex(
-			(stage) => Number(stage.orden) === Number(sheetStage.orden),
-		)
-
-		if (existingIndex >= 0) {
-			merged[existingIndex] = {
-				...merged[existingIndex],
-				...sheetStage,
-			}
-			return
-		}
-
-		if (index === 0) {
-			merged[0] = {
-				...merged[0],
-				...sheetStage,
-			}
-		}
-	})
-
-	return merged
+	return { nombres, apellidos }
 }
 
 const formatRequestDate = (timestamp) => {
@@ -162,32 +115,180 @@ const formatRequestDate = (timestamp) => {
 	return date.toLocaleDateString('es-CO')
 }
 
+const resolveActivity = (activities, activityRef) => {
+	if (!activities || activities.length === 0) return null
+	const ref = String(activityRef ?? '')
+	if (!ref) return null
+	const direct = activities.find((activity) => String(activity.id) === ref)
+	if (direct) return direct
+	const refNumber = Number(ref)
+	if (!Number.isFinite(refNumber)) return null
+	return (
+		activities.find((activity) => Number(activity.orden) === refNumber) ?? null
+	)
+}
+
+const matchesActivity = (activityRef, activity) => {
+	const ref = String(activityRef ?? '')
+	if (!ref) return false
+	return ref === String(activity.id) || ref === String(activity.orden)
+}
+
 const UserPage = () => {
 	const navigate = useNavigate()
 	const { auth, logout, updateAuthUser } = useAuth()
-	const [stages, setStages] = useState(defaultStages)
-	const [myRequests, setMyRequests] = useState([])
-	const [firstStageRequest, setFirstStageRequest] = useState(null)
+	const [processes, setProcesses] = useState([])
+	const [activities, setActivities] = useState([])
+	const [activityActors, setActivityActors] = useState([])
+	const [activityAttachments, setActivityAttachments] = useState([])
+	const [myRecords, setMyRecords] = useState([])
+	const [mySolicitudes, setMySolicitudes] = useState([])
+	const [selectedProcessId, setSelectedProcessId] = useState('')
 	const [userSheet, setUserSheet] = useState(null)
-	const [solicitudActual, setSolicitudActual] = useState(null)
 	const [loading, setLoading] = useState(true)
 	const [formLoading, setFormLoading] = useState(false)
 	const [error, setError] = useState('')
 	const [formMessage, setFormMessage] = useState('')
 	const [formData, setFormData] = useState({ observacion: '', urlDocumento: '' })
 
-	//console.log('name', auth.user , 'other name', auth.user?.given_name, auth.user?.family_name)
+	const activitiesByProcess = useMemo(() => {
+		const map = new Map()
+		activities.forEach((activity) => {
+			const key = String(activity.idProceso ?? '')
+			if (!map.has(key)) {
+				map.set(key, [])
+			}
+			map.get(key).push(activity)
+		})
+		map.forEach((list) => {
+			list.sort((a, b) => Number(a.orden) - Number(b.orden))
+		})
+		return map
+	}, [activities])
 
-	const firstStageOrder = useMemo(() => stages[0]?.orden ?? 1, [stages])
+	const actorsByActivity = useMemo(() => {
+		const map = new Map()
+		activityActors.forEach((actor) => {
+			const key = String(actor.idActividad ?? '')
+			if (!map.has(key)) {
+				map.set(key, [])
+			}
+			map.get(key).push(actor)
+		})
+		return map
+	}, [activityActors])
+
+	const attachmentsByActivity = useMemo(() => {
+		const map = new Map()
+		activityAttachments.forEach((adjunto) => {
+			const key = String(adjunto.idActividad ?? '')
+			if (!map.has(key)) {
+				map.set(key, [])
+			}
+			map.get(key).push(adjunto)
+		})
+		return map
+	}, [activityAttachments])
+
+	const selectedActivities = useMemo(
+		() => activitiesByProcess.get(String(selectedProcessId)) ?? [],
+		[activitiesByProcess, selectedProcessId],
+	)
+
+	const activeSolicitud = useMemo(() => {
+		if (!selectedProcessId) return null
+		const filtered = mySolicitudes.filter(
+			(solicitud) =>
+				String(solicitud.idProceso) === String(selectedProcessId),
+		)
+
+		return (
+			filtered.sort((a, b) => idToNumber(b.id) - idToNumber(a.id))[0] ?? null
+		)
+	}, [mySolicitudes, selectedProcessId])
+
+	const currentActivity = useMemo(() => {
+		if (selectedActivities.length === 0) return null
+		if (activeSolicitud?.actividadActual) {
+			return (
+				resolveActivity(selectedActivities, activeSolicitud.actividadActual) ??
+				selectedActivities[0]
+			)
+		}
+		return selectedActivities[0]
+	}, [activeSolicitud, selectedActivities])
+
+	const solicitudesById = useMemo(() => {
+		const map = new Map()
+		mySolicitudes.forEach((solicitud) => {
+			map.set(String(solicitud.id), solicitud)
+		})
+		return map
+	}, [mySolicitudes])
+
+	const getRecordForActivity = useCallback(
+		(activity) => {
+			if (!activity) return null
+			const recordsForProcess = myRecords.filter((record) => {
+				if (activeSolicitud?.id) {
+					return (
+						String(record.idSolicitud) === String(activeSolicitud.id) &&
+						matchesActivity(record.idActividad, activity)
+					)
+				}
+				const solicitud = solicitudesById.get(String(record.idSolicitud))
+				if (
+					selectedProcessId &&
+					String(solicitud?.idProceso) !== String(selectedProcessId)
+				) {
+					return false
+				}
+				return matchesActivity(record.idActividad, activity)
+			})
+
+			return (
+				recordsForProcess.sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0] ??
+				null
+			)
+		},
+		[activeSolicitud, myRecords, selectedProcessId, solicitudesById],
+	)
+
+	const currentRecord = useMemo(
+		() => (currentActivity ? getRecordForActivity(currentActivity) : null),
+		[currentActivity, getRecordForActivity],
+	)
 
 	const hydrateFromSheets = useCallback(
 		(sheetMap) => {
-			const stageRows = getSheetRows(sheetMap, 'CONVENIOS_ETAPAS', [
-				'convenios_etapas',
-				'etapas',
+			const procesosRows = getSheetRows(sheetMap, 'PROCESOS', ['procesos'])
+			const actividadesRows = getSheetRows(sheetMap, 'ACTIVIDADES', ['actividades'])
+			const adjuntosRows = getSheetRows(sheetMap, 'ADJUNTOS_ACTIVIDADES', [
+				'adjuntos_actividades',
+				'adjuntos',
 			])
-			const mergedStages = mergeStages(stageRows)
-			setStages(mergedStages)
+			const actoresRows = getSheetRows(sheetMap, 'ACTIVIDAD_ACTOR', [
+				'actividad_actor',
+				'actores',
+			])
+
+			const parsedProcesos = procesosRows.map(parseProceso)
+			const parsedActividades = actividadesRows.map(parseActividad)
+			const parsedAdjuntos = adjuntosRows.map(parseAdjunto)
+			const parsedActores = actoresRows.map(parseActor)
+
+			const orderedProcesos = parsedProcesos
+				.map((process) => ({ ...process }))
+				.sort((a, b) => {
+					const diff = idToNumber(a.id) - idToNumber(b.id)
+					if (diff !== 0) return diff
+					return String(a.nombre).localeCompare(String(b.nombre))
+				})
+
+			setProcesses(orderedProcesos)
+			setActivities(parsedActividades)
+			setActivityAttachments(parsedAdjuntos)
+			setActivityActors(parsedActores)
 
 			const usersRows = getSheetRows(sheetMap, 'USUARIOS', ['usuarios'])
 			const foundUser = findUserByEmail(usersRows, auth.user?.email)
@@ -206,28 +307,31 @@ const UserPage = () => {
 			const parsedSolicitudes = solicitudesRows.map(parseSolicitud)
 			const ownRegistros = foundUser
 				? parsedRegistros.filter(
-						(registro) => String(registro.idUsuario) === String(foundUser.id),
+						(registro) =>
+							String(registro.idUsuario) === String(foundUser.id),
+					)
+				: []
+
+			const ownSolicitudes = foundUser
+				? parsedSolicitudes.filter(
+						(solicitud) =>
+							String(solicitud.idUsuario) === String(foundUser.id),
 					)
 				: []
 
 			ownRegistros.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-			setMyRequests(ownRegistros)
+			setMyRecords(ownRegistros)
+			setMySolicitudes(ownSolicitudes)
 
-			const currentFirstStageId = String(mergedStages[0]?.orden ?? 1)
-			const latestFirstStageRequest = ownRegistros.find(
-				(request) => String(request.idEtapa) === String(currentFirstStageId),
-			)
-			setFirstStageRequest(latestFirstStageRequest ?? null)
-
-			const userSolicitud = foundUser
-				? parsedSolicitudes
-						.filter(
-							(solicitud) => String(solicitud.idUsuario) === String(foundUser.id),
-						)
-						.sort((a, b) => idToNumber(b.id) - idToNumber(a.id))[0]
-				: null
-
-			setSolicitudActual(userSolicitud ?? null)
+			setSelectedProcessId((prev) => {
+				if (
+					prev &&
+					orderedProcesos.some((process) => String(process.id) === String(prev))
+				) {
+					return prev
+				}
+				return orderedProcesos[0]?.id ?? ''
+			})
 		},
 		[auth.user?.email, updateAuthUser],
 	)
@@ -246,9 +350,13 @@ const UserPage = () => {
 				return
 			}
 
-			setStages(defaultStages)
-			setMyRequests([])
-			setFirstStageRequest(null)
+			setProcesses([])
+			setActivities([])
+			setActivityActors([])
+			setActivityAttachments([])
+			setMyRecords([])
+			setMySolicitudes([])
+			setSelectedProcessId('')
 			setError('No se pudieron cargar tus solicitudes. Intenta nuevamente.')
 		}
 
@@ -277,12 +385,29 @@ const UserPage = () => {
 		setFormData((prev) => ({ ...prev, [name]: value }))
 	}
 
+	const handleProcessChange = (event) => {
+		setSelectedProcessId(event.target.value)
+		setFormMessage('')
+	}
+
 	const handleSubmit = async (event) => {
 		event.preventDefault()
 
 		const cleanObservation = formData.observacion.trim()
 		if (!cleanObservation) {
 			setFormMessage('Debes escribir una observacion para crear la solicitud.')
+			return
+		}
+
+		if (!selectedProcessId) {
+			setFormMessage('Selecciona un proceso antes de enviar la solicitud.')
+			return
+		}
+
+		const processActivities =
+			activitiesByProcess.get(String(selectedProcessId)) ?? []
+		if (processActivities.length === 0) {
+			setFormMessage('No hay actividades definidas para este proceso.')
 			return
 		}
 
@@ -301,7 +426,7 @@ const UserPage = () => {
 
 			if (!currentUser) {
 				const nextUserId = getNextId(usersRows)
-				const { nombres, apellidos } = splitUserName(auth.user?.name)
+				const { nombres, apellidos } = splitUserName(auth.user?.name ?? '')
 
 				await apiPost(
 					'/api/sheets/USUARIOS/rows',
@@ -327,32 +452,67 @@ const UserPage = () => {
 				})
 			}
 
+			const parsedSolicitudes = solicitudesRows.map(parseSolicitud)
+			const userSolicitudes = parsedSolicitudes.filter(
+				(solicitud) => String(solicitud.idUsuario) === String(currentUser.id),
+			)
+			const solicitudToUse =
+				userSolicitudes
+					.filter(
+						(solicitud) =>
+							String(solicitud.idProceso) === String(selectedProcessId),
+					)
+					.sort((a, b) => idToNumber(b.id) - idToNumber(a.id))[0] ?? null
+			const targetActivity = solicitudToUse
+				? resolveActivity(processActivities, solicitudToUse.actividadActual) ??
+					processActivities[0]
+				: processActivities[0]
+
+			const existingRecord = myRecords.find(
+				(record) =>
+					String(record.idUsuario) === String(currentUser.id) &&
+					String(record.idSolicitud) === String(solicitudToUse?.id ?? '') &&
+					matchesActivity(record.idActividad, targetActivity),
+			)
+
+			if (existingRecord) {
+				setFormMessage('Ya existe un registro para esta actividad.')
+				setFormLoading(false)
+				return
+			}
+
 			const nextRegistroId = getNextId(registrosRows)
 			const nextSolicitudId = getNextId(solicitudesRows)
 			const currentTimestamp = new Date().toISOString()
 			const currentDate = new Date().toISOString().slice(0, 10)
-			console.log('currentDate', currentDate)
-			await apiPost(
-				'/api/sheets/SOLICITUDES/rows',
-				{
-					values: [
-						nextSolicitudId,
-						String(currentUser.id),
-						String(firstStageOrder),
-						currentDate,
-					],
-				},
-				auth.token,
-			)
+
+			let solicitudId = solicitudToUse?.id ?? null
+			if (!solicitudId) {
+				solicitudId = nextSolicitudId
+				await apiPost(
+					'/api/sheets/SOLICITUDES/rows',
+					{
+						values: [
+							solicitudId,
+							String(currentUser.id),
+							String(selectedProcessId),
+							String(targetActivity?.id ?? ''),
+							currentDate,
+						],
+					},
+					auth.token,
+				)
+			}
 
 			await apiPost(
 				'/api/sheets/REGISTROS/rows',
 				{
 					values: [
 						nextRegistroId,
-						currentTimestamp,
 						String(currentUser.id),
-						String(firstStageOrder),
+						String(targetActivity?.id ?? ''),
+						String(solicitudId),
+						currentTimestamp,
 						cleanObservation,
 						false,
 						cleanUrl,
@@ -364,7 +524,11 @@ const UserPage = () => {
 			const refreshSheetMap = await apiGetAllSheets(auth.token)
 			hydrateFromSheets(refreshSheetMap)
 			setFormData({ observacion: '', urlDocumento: '' })
-			setFormMessage('Registro enviado correctamente en el primer paso.')
+			setFormMessage(
+				solicitudToUse
+					? 'Registro enviado correctamente para la actividad.'
+					: 'Solicitud creada correctamente para el proceso seleccionado.',
+			)
 		} catch (submitError) {
 			if (isUnauthorizedError(submitError)) {
 				logout()
@@ -384,12 +548,51 @@ const UserPage = () => {
 	return (
 		<section className="user-page">
 			<div className="page-intro">
-				<h2>Ruta de Solicitud</h2>
+				<h2>Ruta de {processes?.[0]?.nombre ?? 'Proceso'}</h2>
 				<p>
-					Solo el primer paso se encuentra habilitado por ahora. Los siguientes
-					pasos apareceran en gris hasta que sean activados en el proceso.
+					Selecciona el proceso que quieres iniciar. Cada proceso tiene su propia
+					linea de tiempo de actividades y solo la actividad actual estara
+					habilitada.
 				</p>
 			</div>
+
+			{processes.length > 0 ? (
+				<div className="process-selector">
+					<label htmlFor="processSelect">Proceso</label>
+					<select
+						id="processSelect"
+						value={selectedProcessId}
+						onChange={handleProcessChange}
+					>
+						<option value="" disabled>
+							Selecciona un proceso
+						</option>
+						{processes.map((process) => (
+							<option key={process.id} value={process.id}>
+								{process.nombre}
+							</option>
+						))}
+					</select>
+				</div>
+			) : null}
+
+			{userSheet ? (
+				<p className="timeline-meta">
+					Bienvenido
+				</p>
+			) : (
+				<p className="timeline-meta">
+					Aun no estas registrado en USUARIOS. Se creara el usuario cuando
+					envies tu primera solicitud.
+				</p>
+			)}
+
+			{activeSolicitud ? (
+				<p className="timeline-meta">
+					Solicitud actual: {activeSolicitud.id} | Actividad actual:{' '}
+					{currentActivity?.nombre ?? '-'}
+				</p>
+			) : null}
 
 			{error ? <p className="message error">{error}</p> : null}
 
@@ -397,46 +600,74 @@ const UserPage = () => {
 				<div className="page-state">
 					<p>Cargando informacion de tu proceso...</p>
 				</div>
-			) : (
+			) : selectedProcessId && selectedActivities.length > 0 ? (
 				<div className="timeline">
-					{stages.map((stage, index) => {
-						const enabled = index === 0
+					{selectedActivities.map((activity, index) => {
 						const sideClass = index % 2 === 0 ? 'left' : 'right'
+						const activityRecord = getRecordForActivity(activity)
+						const isCurrent =
+							currentActivity &&
+							String(activity.id) === String(currentActivity.id)
+						const enabled = isCurrent || Boolean(activityRecord)
+						const actorNames = (
+							actorsByActivity.get(String(activity.id)) ?? []
+						)
+							.map((actor) => actor.nombre)
+							.filter(Boolean)
+						const attachmentNames = (
+							attachmentsByActivity.get(String(activity.id)) ?? []
+						)
+							.map((adjunto) => adjunto.nombre)
+							.filter(Boolean)
 
 						return (
 							<article
-								key={`${stage.id}-${index}`}
-								className={`timeline-item ${sideClass} ${enabled ? 'enabled' : 'disabled'}`}
+								key={`${activity.id}-${index}`}
+								className={`timeline-item ${sideClass} ${
+									enabled ? 'enabled' : 'disabled'
+								}`}
 							>
-								<div className="timeline-node">{index + 1}</div>
+								<div className="timeline-node">{activity.orden}</div>
 
 								<div className="timeline-card">
-									<h3>{stage.nombre}</h3>
-									<p>{stageDescriptions[index] ?? 'Etapa del proceso de solicitud.'}</p>
-
+									<h3>{activity.nombre}</h3>
 									<p className="timeline-meta">
-										Actor: <strong>{stage.actor || 'Sin definir'}</strong>
+										Actores:{' '}
+										<strong>
+											{actorNames.length > 0
+												? actorNames.join(', ')
+												: 'Sin definir'}
+										</strong>
 									</p>
-									{stage.tiempoMax ? (
+									{activity.tiempoMax ? (
 										<p className="timeline-meta">
-											Tiempo maximo: <strong>{stage.tiempoMax} dias</strong>
+											Tiempo maximo:{' '}
+											<strong>{activity.tiempoMax} dias</strong>
+										</p>
+									) : null}
+									{attachmentNames.length > 0 ? (
+										<p className="timeline-meta">
+											Adjuntos:{' '}
+											<strong>{attachmentNames.join(', ')}</strong>
 										</p>
 									) : null}
 
-									{enabled && !firstStageRequest ? (
+									{isCurrent && !activityRecord ? (
 										<form className="request-form" onSubmit={handleSubmit}>
-											<label htmlFor="observacion">Observacion de postulacion</label>
+											<label htmlFor="observacion">
+												Observacion de la actividad
+											</label>
 											<textarea
 												id="observacion"
 												name="observacion"
-												placeholder="Escribe un resumen de tu solicitud"
+												placeholder="Escribe un resumen para esta actividad"
 												value={formData.observacion}
 												onChange={handleChange}
 												rows={4}
 												required
 											/>
 
-											<label htmlFor="urlDocumento">URL del documento</label>
+											<label htmlFor="urlDocumento">URL del documento soporte</label>
 											<input
 												id="urlDocumento"
 												name="urlDocumento"
@@ -447,29 +678,34 @@ const UserPage = () => {
 											/>
 
 											<button type="submit" disabled={formLoading}>
-												{formLoading ? 'Guardando...' : 'Enviar solicitud'}
+												{formLoading ? 'Guardando...' : 'Enviar actividad'}
 											</button>
 										</form>
-									) : enabled && firstStageRequest ? (
+									) : activityRecord ? (
 										<div className="request-summary">
 											<p>
-												<strong>Solicitud creada:</strong>{' '}
-												{formatRequestDate(firstStageRequest.timestamp)}
+												<strong>Solicitud:</strong>{' '}
+												{activityRecord.idSolicitud || '-'}
+											</p>
+											<p>
+												<strong>Fecha:</strong>{' '}
+												{formatRequestDate(activityRecord.timestamp)}
 											</p>
 											<p>
 												<strong>Observacion:</strong>{' '}
-												{firstStageRequest.observacion || '-'}
+												{activityRecord.observacion || '-'}
 											</p>
 											<p>
 												<strong>Aprobado:</strong>{' '}
-												{String(firstStageRequest.aprobado).toLowerCase() === 'true'
+												{String(activityRecord.aprobado).toLowerCase() ===
+													'true'
 													? 'Si'
 													: 'No'}
 											</p>
-											{firstStageRequest.urlDocumento ? (
+											{activityRecord.urlDocumento ? (
 												<p>
 													<a
-														href={firstStageRequest.urlDocumento}
+														href={activityRecord.urlDocumento}
 														target="_blank"
 														rel="noreferrer"
 													>
@@ -477,10 +713,15 @@ const UserPage = () => {
 													</a>
 												</p>
 											) : null}
+											{isCurrent ? (
+												<p className="timeline-meta">
+													En espera de aprobacion para continuar.
+												</p>
+											) : null}
 										</div>
 									) : (
 										<p className="disabled-note">
-											Este paso estara disponible cuando avance tu solicitud.
+											Esta actividad estara disponible cuando avances en el proceso.
 										</p>
 									)}
 								</div>
@@ -488,38 +729,12 @@ const UserPage = () => {
 						)
 					})}
 				</div>
+			) : (
+				<p className="empty-state">
+					Selecciona un proceso para ver sus actividades.
+				</p>
 			)}
-{/** 
-			<section className="my-requests">
-				<h3>Mis Registros</h3>
-				{userSheet ? (
-					<p className="timeline-meta">ID de usuario: {userSheet.id}</p>
-				) : (
-					<p className="timeline-meta">
-						Aun no estas registrado en USUARIOS. Se creara el usuario cuando envies la primera solicitud.
-					</p>
-				)}
 
-				{myRequests.length === 0 ? (
-					<p className="empty-state">Aun no tienes registros en el proceso.</p>
-				) : (
-					<div className="request-list">
-						{myRequests.map((request) => (
-							<article className="request-item" key={request.id}>
-								<span className="request-id">{request.idSolicitud || request.id}</span>
-								<span>Etapa: {request.idEtapa || '-'}</span>
-								<span>Fecha: {request.timestamp || '-'}</span>
-								{request.urlDocumento ? (
-									<a href={request.urlDocumento} target="_blank" rel="noreferrer">
-										Ver documento
-									</a>
-								) : null}
-							</article>
-						))}
-					</div>
-				)}
-			</section>
-*/}
 			{formMessage ? <p className="message info">{formMessage}</p> : null}
 		</section>
 	)
