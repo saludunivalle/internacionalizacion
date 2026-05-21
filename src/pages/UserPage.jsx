@@ -514,7 +514,7 @@ const UserPage = () => {
 						String(solicitudId),
 						currentTimestamp,
 						cleanObservation,
-						false,
+						true,
 						cleanUrl,
 					],
 				},
@@ -678,7 +678,7 @@ const UserPage = () => {
 											/>
 
 											<button type="submit" disabled={formLoading}>
-												{formLoading ? 'Guardando...' : 'Enviar actividad'}
+												{formLoading ? 'Guardando...' : 'Completar'}
 											</button>
 										</form>
 									) : activityRecord ? (
