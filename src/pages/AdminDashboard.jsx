@@ -184,6 +184,15 @@ const formatDate = (timestamp) => {
   return date.toLocaleDateString("es-CO");
 };
 
+const formatUserLabel = (label, program) => {
+  const cleanLabel = String(label ?? "").trim();
+  const cleanProgram = String(program ?? "").trim();
+  if (cleanLabel && cleanProgram) return `${cleanLabel} - ${cleanProgram}`;
+  if (cleanLabel) return cleanLabel;
+  if (cleanProgram) return cleanProgram;
+  return "Sin usuario";
+};
+
 const resolveActivity = (activities, activityRef) => {
   if (!activities || activities.length === 0) return null;
   const ref = String(activityRef ?? "");
@@ -349,13 +358,13 @@ const AdminDashboard = () => {
       const idKey = String(solicitud.idUsuario ?? "");
       const emailKey = String(solicitud.idUsuario ?? "").toLowerCase();
       const initialData = initialDataBySolicitud.get(String(solicitud.id));
-      return (
+      const baseLabel =
         initialData?.nombre ||
         userLabels.get(idKey) ||
         userLabels.get(emailKey) ||
         solicitud.idUsuario ||
-        "Sin usuario"
-      );
+        "";
+      return formatUserLabel(baseLabel, initialData?.programa);
     },
     [initialDataBySolicitud, userLabels],
   );
@@ -456,12 +465,14 @@ const AdminDashboard = () => {
         return {
           ...registro,
           dateLabel: formatDate(registro.timestamp),
-          userLabel:
+          userLabel: formatUserLabel(
             initialData?.nombre ||
-            usersByKey.get(String(registro.idUsuario)) ||
-            usersByKey.get(String(registro.idUsuario).toLowerCase()) ||
-            registro.idUsuario ||
-            "Sin usuario",
+              usersByKey.get(String(registro.idUsuario)) ||
+              usersByKey.get(String(registro.idUsuario).toLowerCase()) ||
+              registro.idUsuario ||
+              "",
+            initialData?.programa,
+          ),
           solicitudId: linkedSolicitud?.id ?? registro.idSolicitud ?? null,
           idProceso: linkedSolicitud?.idProceso ?? "",
           solicitudActividadActual: linkedSolicitud?.actividadActual ?? null,
