@@ -15,6 +15,14 @@ const parseProceso = (row, index) => ({
   nombre: String(pickValue(row, ["nombre"], 1) ?? `Proceso ${index + 1}`),
 });
 
+const parsePrograma = (row, index) => ({
+  id: String(pickValue(row, ["id"], 0) ?? index + 1),
+  nombre: String(
+    pickValue(row, ["nombre", "programa", "program"], 1) ??
+      `Programa ${index + 1}`,
+  ),
+});
+
 const parseActividad = (row, index) => ({
   id: String(pickValue(row, ["id"], 0) ?? index + 1),
   idProceso: String(pickValue(row, ["id_proceso", "proceso"], 1) ?? ""),
@@ -49,6 +57,7 @@ const parseRegistro = (row, index) => ({
   observacion: String(pickValue(row, ["observacion", "comentario"], 5) ?? ""),
   aprobado: String(pickValue(row, ["aprobado"], 6) ?? ""),
   url: String(pickValue(row, ["url", "url_documento"], 7) ?? ""),
+  correosExtra: String(pickValue(row, ["correos_extra", "correos"], 8) ?? ""),
 });
 
 const parseSolicitud = (row, index) => ({
@@ -66,6 +75,7 @@ const parseDatosIniciales = (row, index) => ({
   idSolicitud: String(pickValue(row, ["id_solicitud", "solicitud"], 1) ?? ""),
   nombre: String(pickValue(row, ["nombre"], 2) ?? ""),
   correo: String(pickValue(row, ["correo", "email"], 3) ?? ""),
+  programa: String(pickValue(row, ["programa", "program"], 4) ?? ""),
 });
 
 const parseUsuario = (row, index) => {
@@ -88,6 +98,44 @@ const idToNumber = (value) => {
   if (!matches || matches.length === 0) return 0;
   const candidate = Number(matches[matches.length - 1]);
   return Number.isFinite(candidate) ? candidate : 0;
+};
+
+const normalizeText = (value) =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase();
+
+const parseDayCount = (value) => {
+  const parsed = Number(
+    String(value ?? "")
+      .replace(",", ".")
+      .trim(),
+  );
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+};
+
+const msPerDay = 24 * 60 * 60 * 1000;
+
+const getElapsedDays = (dateValue) => {
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.max(0, (Date.now() - date.getTime()) / msPerDay);
+};
+
+const getTimingStatus = (solicitud, processActivities) => {
+  if (!solicitud) return "neutral";
+  const currentActivity =
+    resolveActivity(processActivities, solicitud.actividadActual) ??
+    processActivities[0] ??
+    null;
+  const maxDays = parseDayCount(currentActivity?.tiempoMax);
+  const elapsedDays = getElapsedDays(solicitud.fecha);
+  if (!currentActivity || !maxDays || elapsedDays === null) return "neutral";
+  const ratio = elapsedDays / maxDays;
+  if (ratio >= 0.8) return "red";
+  if (ratio >= 0.5) return "yellow";
+  return "green";
 };
 
 const getNextId = (rows) => {
@@ -159,6 +207,7 @@ const AdminDashboard = () => {
   const navigate = useNavigate();
   const { auth, logout, isAdmin } = useAuth();
   const [processes, setProcesses] = useState([]);
+  const [programs, setPrograms] = useState([]);
   const [activities, setActivities] = useState([]);
   const [activityActors, setActivityActors] = useState([]);
   const [activityAttachments, setActivityAttachments] = useState([]);
@@ -170,15 +219,17 @@ const AdminDashboard = () => {
   const [userLabels, setUserLabels] = useState(new Map());
   const [selectedSolicitud, setSelectedSolicitud] = useState(null);
   const [selectedFlow, setSelectedFlow] = useState([]);
-  const [viewMode, setViewMode] = useState("steps");
+  const [viewMode, setViewMode] = useState("solicitud");
   const [activityForms, setActivityForms] = useState({});
   const [modalMessage, setModalMessage] = useState("");
   const [modalMessageType, setModalMessageType] = useState("");
+  const [timelineMessage, setTimelineMessage] = useState("");
   const [submittingActivity, setSubmittingActivity] = useState("");
   const [showStartForm, setShowStartForm] = useState(false);
   const [startForm, setStartForm] = useState({
     nombre: "",
     correo: "",
+    programa: "",
     observacion: "",
     urlDocumento: "",
   });
@@ -187,6 +238,8 @@ const AdminDashboard = () => {
   const [startMessageType, setStartMessageType] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [openProcessId, setOpenProcessId] = useState("");
+  const [processFilters, setProcessFilters] = useState({});
 
   const activitiesByProcess = useMemo(() => {
     const map = new Map();
@@ -251,12 +304,44 @@ const AdminDashboard = () => {
     return map;
   }, [records]);
 
+  const programNameMap = useMemo(() => {
+    const map = new Map();
+    programs.forEach((program) => {
+      const label = String(program.nombre ?? "").trim();
+      if (!label) return;
+      map.set(normalizeText(label), label);
+    });
+    return map;
+  }, [programs]);
+
+  const programOptions = useMemo(
+    () => programs.map((program) => ({ ...program })),
+    [programs],
+  );
+
+  const resolveProgramName = useCallback(
+    (value) => programNameMap.get(normalizeText(value)) ?? "",
+    [programNameMap],
+  );
+
   const firstProcessId = useMemo(() => processes[0]?.id ?? "", [processes]);
+  const processOneId = useMemo(() => {
+    const processOne = processes.find(
+      (process) => idToNumber(process.id) === 1,
+    );
+    return processOne?.id ?? "";
+  }, [processes]);
   const firstProcessActivities = useMemo(
     () => activitiesByProcess.get(String(firstProcessId)) ?? [],
     [activitiesByProcess, firstProcessId],
   );
+  const processOneActivities = useMemo(
+    () => activitiesByProcess.get(String(processOneId)) ?? [],
+    [activitiesByProcess, processOneId],
+  );
   const firstActivity = firstProcessActivities[0] ?? null;
+  const lastActivityFirstProcess =
+    processOneActivities[processOneActivities.length - 1] ?? null;
 
   const resolveSolicitudLabel = useCallback(
     (solicitud) => {
@@ -277,6 +362,7 @@ const AdminDashboard = () => {
 
   const hydrateDashboard = useCallback((sheetMap) => {
     const procesosRows = getSheetRows(sheetMap, "PROCESOS", ["procesos"]);
+    const programasRows = getSheetRows(sheetMap, "PROGRAMAS", ["programas"]);
     const actividadesRows = getSheetRows(sheetMap, "ACTIVIDADES", [
       "actividades",
     ]);
@@ -304,6 +390,7 @@ const AdminDashboard = () => {
     );
 
     const parsedProcesos = procesosRows.map(parseProceso);
+    const parsedProgramas = programasRows.map(parsePrograma);
     const parsedActividades = actividadesRows.map(parseActividad);
     const parsedAdjuntos = adjuntosRows.map(parseAdjunto);
     const parsedActores = actoresRows.map(parseActor);
@@ -321,6 +408,7 @@ const AdminDashboard = () => {
       });
 
     setProcesses(orderedProcesos);
+    setPrograms(parsedProgramas);
     setActivities(parsedActividades);
     setActivityAttachments(parsedAdjuntos);
     setActivityActors(parsedActores);
@@ -407,6 +495,7 @@ const AdminDashboard = () => {
       setActivityAttachments([]);
       setSolicitudes([]);
       setRecords([]);
+      setPrograms([]);
       setInitialDataBySolicitud(new Map());
       setUserLabels(new Map());
       setError("No se pudo cargar la informacion del dashboard.");
@@ -481,6 +570,23 @@ const AdminDashboard = () => {
                 String(record.idProceso) === String(process.id) &&
                 matchesActivity(record.idActividad, activity),
             )
+            .map((record) => {
+              const linkedSolicitud = solicitudesById.get(
+                String(record.solicitudId ?? ""),
+              ) ?? {
+                id: record.solicitudId ?? record.id,
+                idProceso: record.idProceso,
+                actividadActual:
+                  record.solicitudActividadActual ?? record.idActividad ?? "",
+                fecha: record.solicitudFecha ?? record.timestamp ?? "",
+              };
+              const timingStatus = getTimingStatus(
+                linkedSolicitud,
+                processActivities,
+              );
+
+              return { ...record, timingStatus };
+            })
             .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
           const activityCount =
@@ -496,7 +602,7 @@ const AdminDashboard = () => {
         }),
       };
     });
-  }, [activitiesByProcess, processes, records, solicitudes]);
+  }, [activitiesByProcess, processes, records, solicitudes, solicitudesById]);
 
   const groupedSolicitudes = useMemo(() => {
     return processes.map((process) => {
@@ -513,12 +619,14 @@ const AdminDashboard = () => {
             processActivities[0] ??
             null;
           const initialData = initialDataBySolicitud.get(String(solicitud.id));
+          const timingStatus = getTimingStatus(solicitud, processActivities);
           return {
             ...solicitud,
             userLabel: resolveSolicitudLabel(solicitud),
             currentActivity,
             currentOrder: currentActivity?.orden ?? 0,
             initialData,
+            timingStatus,
           };
         })
         .sort((a, b) => {
@@ -527,10 +635,21 @@ const AdminDashboard = () => {
           return idToNumber(a.id) - idToNumber(b.id);
         });
 
+      const statusCounts = items.reduce(
+        (acc, item) => {
+          if (item.timingStatus === "green") acc.green += 1;
+          if (item.timingStatus === "yellow") acc.yellow += 1;
+          if (item.timingStatus === "red") acc.red += 1;
+          return acc;
+        },
+        { green: 0, yellow: 0, red: 0 },
+      );
+
       return {
         ...process,
         solicitudCount: processSolicitudes.length,
         items,
+        statusCounts,
       };
     });
   }, [
@@ -561,6 +680,7 @@ const AdminDashboard = () => {
       setActivityForms({});
       setModalMessage("");
       setModalMessageType("");
+      setTimelineMessage("");
       setSubmittingActivity("");
       setSelectedSolicitud({
         ...solicitud,
@@ -597,8 +717,20 @@ const AdminDashboard = () => {
     setActivityForms({});
     setModalMessage("");
     setModalMessageType("");
+    setTimelineMessage("");
     setSubmittingActivity("");
   };
+
+  const nextEditableActivityId = useMemo(() => {
+    if (!selectedFlow || selectedFlow.length === 0) return "";
+    let lastCompletedIndex = -1;
+    selectedFlow.forEach((item, index) => {
+      if (item.registro) lastCompletedIndex = index;
+    });
+    const nextIndex = lastCompletedIndex + 1;
+    if (nextIndex < 0 || nextIndex >= selectedFlow.length) return "";
+    return String(selectedFlow[nextIndex].activity?.id ?? "");
+  }, [selectedFlow]);
 
   const isInitialStep = useCallback(
     (activity, solicitud) => {
@@ -627,6 +759,42 @@ const AdminDashboard = () => {
     });
   }, []);
 
+  const handleExtraEmailChange = useCallback((activityId, index, value) => {
+    setActivityForms((prev) => {
+      const key = String(activityId);
+      const current = prev[key] ?? {};
+      const list = Array.isArray(current.correosExtra)
+        ? [...current.correosExtra]
+        : [""];
+      list[index] = value;
+      return {
+        ...prev,
+        [key]: {
+          ...current,
+          correosExtra: list,
+        },
+      };
+    });
+  }, []);
+
+  const handleAddExtraEmail = useCallback((activityId) => {
+    setActivityForms((prev) => {
+      const key = String(activityId);
+      const current = prev[key] ?? {};
+      const list = Array.isArray(current.correosExtra)
+        ? [...current.correosExtra]
+        : [""];
+      list.push("");
+      return {
+        ...prev,
+        [key]: {
+          ...current,
+          correosExtra: list,
+        },
+      };
+    });
+  }, []);
+
   const handleStartFormChange = (event) => {
     const { name, value } = event.target;
     setStartForm((prev) => ({ ...prev, [name]: value }));
@@ -645,11 +813,31 @@ const AdminDashboard = () => {
 
     const nombre = startForm.nombre.trim();
     const correo = startForm.correo.trim();
+    const programaInput = startForm.programa.trim();
     const observacion = startForm.observacion.trim();
     const urlDocumento = startForm.urlDocumento.trim();
 
     if (!nombre || !correo) {
       setStartMessage("Debes indicar nombre y correo para iniciar el proceso.");
+      setStartMessageType("error");
+      return;
+    }
+
+    if (!programaInput) {
+      setStartMessage("Debes indicar el programa del docente.");
+      setStartMessageType("error");
+      return;
+    }
+
+    if (programOptions.length === 0) {
+      setStartMessage("No hay programas configurados en la hoja PROGRAMAS.");
+      setStartMessageType("error");
+      return;
+    }
+
+    const programa = resolveProgramName(programaInput);
+    if (!programa) {
+      setStartMessage("El programa no coincide con ninguna opciones.");
       setStartMessageType("error");
       return;
     }
@@ -732,6 +920,7 @@ const AdminDashboard = () => {
             observacion,
             true,
             urlDocumento,
+            "",
           ],
         },
         auth.token,
@@ -741,7 +930,13 @@ const AdminDashboard = () => {
       await apiPost(
         "/api/sheets/DATOS_INICIALES_SOLICITUD/rows",
         {
-          values: [nextDatosId, String(nextSolicitudId), nombre, correo],
+          values: [
+            nextDatosId,
+            String(nextSolicitudId),
+            nombre,
+            correo,
+            programa,
+          ],
         },
         auth.token,
       );
@@ -751,6 +946,7 @@ const AdminDashboard = () => {
       setStartForm({
         nombre: "",
         correo: "",
+        programa: "",
         observacion: "",
         urlDocumento: "",
       });
@@ -813,6 +1009,31 @@ const AdminDashboard = () => {
     const needsInitialData = isInitialStep(activity, selectedSolicitud);
     const nombre = String(formValues.nombre ?? "").trim();
     const correo = String(formValues.correo ?? "").trim();
+    const programaInput = String(formValues.programa ?? "").trim();
+    const isFinalEmailStep =
+      idToNumber(selectedSolicitud?.idProceso) === 1 &&
+      lastActivityFirstProcess &&
+      String(activity.id) === String(lastActivityFirstProcess.id);
+    const correosExtra = Array.isArray(formValues.correosExtra)
+      ? formValues.correosExtra
+      : [];
+    const correosExtraValue = isFinalEmailStep
+      ? correosExtra
+          .map((item) => String(item ?? "").trim())
+          .filter(Boolean)
+          .join(",")
+      : "";
+
+    if (
+      nextEditableActivityId &&
+      String(activity.id) !== String(nextEditableActivityId)
+    ) {
+      setModalMessage(
+        "Solo puedes completar la actividad que sigue a la ultima registrada.",
+      );
+      setModalMessageType("error");
+      return;
+    }
 
     if (!observacion) {
       setModalMessage("Debes escribir una observacion para completar el paso.");
@@ -822,6 +1043,21 @@ const AdminDashboard = () => {
 
     if (needsInitialData && (!nombre || !correo)) {
       setModalMessage("Debes completar nombre y correo en este paso.");
+      setModalMessageType("error");
+      return;
+    }
+
+    if (needsInitialData && !programaInput) {
+      setModalMessage("Debes indicar el programa del docente.");
+      setModalMessageType("error");
+      return;
+    }
+
+    const programa = needsInitialData ? resolveProgramName(programaInput) : "";
+    if (needsInitialData && !programa) {
+      setModalMessage(
+        "El programa debe coincidir con una opcion de la hoja PROGRAMAS.",
+      );
       setModalMessageType("error");
       return;
     }
@@ -861,6 +1097,7 @@ const AdminDashboard = () => {
             observacion,
             true,
             urlDocumento,
+            correosExtraValue,
           ],
         },
         auth.token,
@@ -889,6 +1126,7 @@ const AdminDashboard = () => {
                 String(selectedSolicitud.id),
                 nombre,
                 correo,
+                programa,
               ],
             },
             auth.token,
@@ -932,6 +1170,8 @@ const AdminDashboard = () => {
           urlDocumento: "",
           nombre: "",
           correo: "",
+          programa: "",
+          correosExtra: [""],
         },
       }));
     } catch (submitError) {
@@ -975,9 +1215,9 @@ const AdminDashboard = () => {
             />
             Vista por pasos
           </label>
-          <label htmlFor="viewRequest">
+          <label htmlFor="viewRequests">
             <input
-              id="viewRequest"
+              id="viewRequests"
               type="radio"
               name="viewMode"
               value="solicitud"
@@ -1029,6 +1269,17 @@ const AdminDashboard = () => {
                   required
                 />
 
+                <label htmlFor="startPrograma">Programa</label>
+                <input
+                  id="startPrograma"
+                  name="programa"
+                  type="text"
+                  list="programas-list"
+                  value={startForm.programa}
+                  onChange={handleStartFormChange}
+                  required
+                />
+
                 <label htmlFor="startObservacion">Observacion inicial</label>
                 <textarea
                   id="startObservacion"
@@ -1065,10 +1316,21 @@ const AdminDashboard = () => {
       {processTotals.length > 0 ? (
         <div className="admin-kpis">
           {processTotals.map((process) => (
-            <article key={process.id}>
+            <button
+              key={process.id}
+              type="button"
+              className={`admin-kpi-card${
+                String(openProcessId) === String(process.id) ? " is-active" : ""
+              }`}
+              onClick={() =>
+                setOpenProcessId((prev) =>
+                  String(prev) === String(process.id) ? "" : String(process.id),
+                )
+              }
+            >
               <span>{process.nombre}</span>
               <strong>{process.solicitudCount}</strong>
-            </article>
+            </button>
           ))}
         </div>
       ) : (
@@ -1081,13 +1343,21 @@ const AdminDashboard = () => {
         <div className="page-state">
           <p>Cargando dashboard...</p>
         </div>
-      ) : viewMode === "steps" ? (
+      ) : viewMode === "solicitud" ? (
         <div className="admin-groups">
           {groupedSolicitudes.length === 0 ? (
             <p className="empty-state">No hay procesos configurados.</p>
           ) : (
             groupedSolicitudes.map((group) => (
-              <details key={group.id} className="admin-group" open={false}>
+              <details
+                key={group.id}
+                className="admin-group"
+                open={String(openProcessId) === String(group.id)}
+                onToggle={(event) => {
+                  const isOpen = event.currentTarget.open;
+                  setOpenProcessId(isOpen ? String(group.id) : "");
+                }}
+              >
                 <summary>
                   <span>{group.nombre}</span>
                   <span className="badge-count">
@@ -1096,39 +1366,123 @@ const AdminDashboard = () => {
                 </summary>
 
                 <div className="admin-items">
+                  <div className="admin-status-filters">
+                    <button
+                      type="button"
+                      className={`status-card status-green${
+                        (processFilters[group.id] ?? "all") === "green"
+                          ? " is-active"
+                          : ""
+                      }`}
+                      onClick={() =>
+                        setProcessFilters((prev) => ({
+                          ...prev,
+                          [group.id]:
+                            (prev[group.id] ?? "all") === "green"
+                              ? "all"
+                              : "green",
+                        }))
+                      }
+                    >
+                      <span>Plazo amplio</span>
+                      <strong>{group.statusCounts?.green ?? 0}</strong>
+                    </button>
+                    <button
+                      type="button"
+                      className={`status-card status-yellow${
+                        (processFilters[group.id] ?? "all") === "yellow"
+                          ? " is-active"
+                          : ""
+                      }`}
+                      onClick={() =>
+                        setProcessFilters((prev) => ({
+                          ...prev,
+                          [group.id]:
+                            (prev[group.id] ?? "all") === "yellow"
+                              ? "all"
+                              : "yellow",
+                        }))
+                      }
+                    >
+                      <span>Tiempo medio</span>
+                      <strong>{group.statusCounts?.yellow ?? 0}</strong>
+                    </button>
+                    <button
+                      type="button"
+                      className={`status-card status-red${
+                        (processFilters[group.id] ?? "all") === "red"
+                          ? " is-active"
+                          : ""
+                      }`}
+                      onClick={() =>
+                        setProcessFilters((prev) => ({
+                          ...prev,
+                          [group.id]:
+                            (prev[group.id] ?? "all") === "red" ? "all" : "red",
+                        }))
+                      }
+                    >
+                      <span>Tiempo critico</span>
+                      <strong>{group.statusCounts?.red ?? 0}</strong>
+                    </button>
+                  </div>
                   {group.items.length === 0 ? (
                     <p className="empty-state">
                       No hay solicitudes activas en este proceso.
                     </p>
                   ) : (
-                    <div className="admin-records">
-                      {group.items.map((solicitud) => (
-                        <article
-                          key={solicitud.id}
-                          className="admin-record-item"
-                        >
-                          <button
-                            type="button"
-                            className="admin-record-link"
-                            onClick={() => openFlowForSolicitud(solicitud)}
-                          >
-                            <span className="record-id">{solicitud.id}</span>
-                            <span className="record-date">
-                              {formatDate(solicitud.fecha)}
-                            </span>
-                            <span className="record-user">
-                              {solicitud.userLabel}
-                            </span>
-                          </button>
+                    (() => {
+                      const activeFilter = processFilters[group.id] ?? "all";
+                      const filteredItems =
+                        activeFilter === "all"
+                          ? group.items
+                          : group.items.filter(
+                              (item) => item.timingStatus === activeFilter,
+                            );
 
-                          <div className="admin-step-tag">
-                            {solicitud.currentActivity
-                              ? `Paso ${solicitud.currentActivity.orden}`
-                              : "Sin actividad"}
-                          </div>
-                        </article>
-                      ))}
-                    </div>
+                      if (filteredItems.length === 0) {
+                        return (
+                          <p className="empty-state">
+                            No hay solicitudes para este filtro.
+                          </p>
+                        );
+                      }
+
+                      return (
+                        <div className="admin-records">
+                          {filteredItems.map((solicitud) => (
+                            <article
+                              key={solicitud.id}
+                              className={`admin-record-item status-${
+                                solicitud.timingStatus || "neutral"
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                className="admin-record-link"
+                                onClick={() => openFlowForSolicitud(solicitud)}
+                              >
+                                <span className="record-id">
+                                  {solicitud.id}
+                                </span>
+                                <span className="record-date">
+                                  {formatDate(solicitud.fecha)}
+                                </span>
+                                <span className="record-user">
+                                  {solicitud.userLabel}
+                                </span>
+                              </button>
+
+                              <div className="admin-step-tag">
+                                {solicitud.currentActivity
+                                  ? `Paso ${solicitud.currentActivity.orden}`
+                                  : "Sin actividad"}
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      );
+                    })()
                   )}
                 </div>
               </details>
@@ -1141,7 +1495,15 @@ const AdminDashboard = () => {
             <p className="empty-state">No hay procesos configurados.</p>
           ) : (
             groupedRecords.map((group) => (
-              <details key={group.id} className="admin-group" open={false}>
+              <details
+                key={group.id}
+                className="admin-group"
+                open={String(openProcessId) === String(group.id)}
+                onToggle={(event) => {
+                  const isOpen = event.currentTarget.open;
+                  setOpenProcessId(isOpen ? String(group.id) : "");
+                }}
+              >
                 <summary>
                   <span>{group.nombre}</span>
                   <span className="badge-count">
@@ -1156,11 +1518,20 @@ const AdminDashboard = () => {
                     </p>
                   ) : (
                     group.activities.map((activity) => (
-                      <details key={activity.id} className="admin-group">
+                      <details
+                        key={activity.id}
+                        className="admin-group activity-group"
+                      >
                         <summary>
                           <span>{activity.nombre}</span>
-                          <span className="badge-count">
-                            {activity.solicitudCount} solicitudes
+                          <span className="badge-count badge-count-activity">
+                            <span className="badge-count-number">
+                              {activity.solicitudCount}
+                            </span>
+                            <span
+                              className="badge-mail-icon"
+                              aria-hidden="true"
+                            />
                           </span>
                         </summary>
 
@@ -1173,7 +1544,9 @@ const AdminDashboard = () => {
                             activity.items.map((record) => (
                               <article
                                 key={`${activity.id}-${record.id}`}
-                                className="admin-record-item"
+                                className={`admin-record-item status-${
+                                  record.timingStatus || "neutral"
+                                }`}
                               >
                                 <button
                                   type="button"
@@ -1225,7 +1598,7 @@ const AdminDashboard = () => {
               <div>
                 <h3>Linea de tiempo de solicitud</h3>
                 <p>
-                  Solicitud: {selectedSolicitud.id} |{" "}
+                  Solicitud número {selectedSolicitud.id} |{" "}
                   {selectedSolicitud.userLabel}
                 </p>
               </div>
@@ -1238,6 +1611,9 @@ const AdminDashboard = () => {
                 <p className={`message ${modalMessageType || "info"}`}>
                   {modalMessage}
                 </p>
+              ) : null}
+              {timelineMessage ? (
+                <p className="message info">{timelineMessage}</p>
               ) : null}
               <div className="timeline">
                 {selectedFlow.map(({ activity, registro }, index) => {
@@ -1262,12 +1638,28 @@ const AdminDashboard = () => {
                     formValues.nombre ?? initialData?.nombre ?? "";
                   const correoValue =
                     formValues.correo ?? initialData?.correo ?? "";
+                  const programaValue =
+                    formValues.programa ?? initialData?.programa ?? "";
                   const isSubmitting = submittingActivity === formKey;
+                  const isBlocked =
+                    !registro &&
+                    nextEditableActivityId &&
+                    String(activity.id) !== String(nextEditableActivityId);
+                  const isLastStep = index === selectedFlow.length - 1;
+                  const isFinalEmailStep =
+                    idToNumber(selectedSolicitud?.idProceso) === 1 &&
+                    lastActivityFirstProcess &&
+                    String(activity.id) === String(lastActivityFirstProcess.id);
+                  const extraEmails = Array.isArray(formValues.correosExtra)
+                    ? formValues.correosExtra
+                    : [""];
 
                   return (
                     <article
                       key={`${activity.id}-${index}`}
-                      className={`timeline-item ${sideClass} enabled`}
+                      className={`timeline-item ${sideClass} ${
+                        isBlocked ? "disabled" : "enabled"
+                      }`}
                     >
                       <div className="timeline-node">{activity.orden}</div>
                       <div className="timeline-card">
@@ -1310,7 +1702,9 @@ const AdminDashboard = () => {
                                 : "No"}
                             </p>
                             {isInitial &&
-                            (initialData?.nombre || initialData?.correo) ? (
+                            (initialData?.nombre ||
+                              initialData?.correo ||
+                              initialData?.programa) ? (
                               <>
                                 <p>
                                   <strong>Nombre:</strong>{" "}
@@ -1320,6 +1714,12 @@ const AdminDashboard = () => {
                                   <strong>Correo:</strong>{" "}
                                   {initialData?.correo || "-"}
                                 </p>
+                                {initialData?.programa ? (
+                                  <p>
+                                    <strong>Programa:</strong>{" "}
+                                    {initialData.programa}
+                                  </p>
+                                ) : null}
                               </>
                             ) : null}
                             {registro.url ? (
@@ -1345,7 +1745,7 @@ const AdminDashboard = () => {
                               </button>
                             ) : null}
                           </div>
-                        ) : isAdmin ? (
+                        ) : isAdmin && !isBlocked ? (
                           <form
                             className="request-form"
                             onSubmit={(event) => {
@@ -1387,6 +1787,24 @@ const AdminDashboard = () => {
                                   }
                                   required
                                 />
+
+                                <label htmlFor={`programa-${formKey}`}>
+                                  Programa
+                                </label>
+                                <input
+                                  id={`programa-${formKey}`}
+                                  type="text"
+                                  list="programas-list"
+                                  value={programaValue}
+                                  onChange={(event) =>
+                                    handleActivityFormChange(
+                                      formKey,
+                                      "programa",
+                                      event.target.value,
+                                    )
+                                  }
+                                  required
+                                />
                               </>
                             ) : null}
 
@@ -1422,15 +1840,68 @@ const AdminDashboard = () => {
                               }
                             />
 
+                            {isFinalEmailStep ? (
+                              <div className="extra-emails">
+                                <span className="extra-emails-label">
+                                  Correos extra
+                                </span>
+                                {extraEmails.map((email, emailIndex) => (
+                                  <div
+                                    key={`${formKey}-email-${emailIndex}`}
+                                    className="extra-email-row"
+                                  >
+                                    <input
+                                      type="email"
+                                      placeholder="correo@ejemplo.com"
+                                      value={email}
+                                      onChange={(event) =>
+                                        handleExtraEmailChange(
+                                          formKey,
+                                          emailIndex,
+                                          event.target.value,
+                                        )
+                                      }
+                                    />
+                                    {emailIndex === extraEmails.length - 1 ? (
+                                      <button
+                                        type="button"
+                                        className="add-email-btn"
+                                        onClick={() =>
+                                          handleAddExtraEmail(formKey)
+                                        }
+                                      >
+                                        +
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+
                             <button type="submit" disabled={isSubmitting}>
                               {isSubmitting ? "Guardando..." : "Completar paso"}
                             </button>
                           </form>
                         ) : (
                           <p className="disabled-note">
-                            No hay registro en esta actividad.
+                            {isBlocked
+                              ? "Actividad bloqueada hasta completar el paso anterior."
+                              : "No hay registro en esta actividad."}
                           </p>
                         )}
+                        {isLastStep ? (
+                          <button
+                            type="button"
+                            className="timeline-close-btn"
+                            onClick={() =>
+                              setTimelineMessage(
+                                "Solicitud cerrada. Gracias por completar el proceso.",
+                              )
+                            }
+                          >
+                            Cerrar solicitud
+                          </button>
+                        ) : null}
                       </div>
                     </article>
                   );
@@ -1440,6 +1911,12 @@ const AdminDashboard = () => {
           </div>
         </div>
       ) : null}
+
+      <datalist id="programas-list">
+        {programOptions.map((program) => (
+          <option key={program.id} value={program.nombre} />
+        ))}
+      </datalist>
     </section>
   );
 };

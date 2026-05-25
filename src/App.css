@@ -426,6 +426,54 @@
   cursor: wait;
 }
 
+.timeline-close-btn {
+  margin-top: 0.8rem;
+  border: none;
+  border-radius: 8px;
+  padding: 0.55rem 0.95rem;
+  background: #2f4154;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.timeline-close-btn:hover {
+  background: #243447;
+}
+
+.extra-emails {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+
+.extra-emails-label {
+  font-weight: 600;
+  color: #3c3c3c;
+}
+
+.extra-email-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.add-email-btn {
+  border: none;
+  border-radius: 8px;
+  background: #ef7d2d;
+  color: #fff;
+  font-weight: 800;
+  width: 34px;
+  height: 34px;
+  cursor: pointer;
+}
+
+.add-email-btn:hover {
+  background: #d9681a;
+}
+
 .my-requests {
   margin-top: 1.2rem;
   background: rgba(255, 255, 255, 0.76);
@@ -573,20 +621,32 @@
   justify-content: center;
 }
 
-.admin-kpis article {
-  background: #fff;
+.admin-kpi-card {
   border: 1px solid #d8d8d8;
   border-radius: 12px;
   padding: 0.8rem;
   text-align: center;
+  background: #fff;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-.admin-kpis span {
+.admin-kpi-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
+}
+
+.admin-kpi-card.is-active {
+  border-color: #ef7d2d;
+  box-shadow: 0 10px 22px rgba(239, 125, 45, 0.25);
+}
+
+.admin-kpi-card span {
   display: block;
   color: #5b5b5b;
 }
 
-.admin-kpis strong {
+.admin-kpi-card strong {
   font-family: 'Montserrat', sans-serif;
   font-size: 1.5rem;
   color: #262626;
@@ -618,6 +678,22 @@
   background: #e0dfdf;
 }
 
+.admin-group.activity-group {
+  border-color: #dadada;
+  border-style: dashed;
+  background: #fff3e4;
+}
+
+.admin-group.activity-group summary {
+  background:  #e4e4e4;
+  color: #000000;
+  border-left: 6px solid #000000;
+}
+
+.admin-group.activity-group .badge-count {
+  background: #b86b2d;
+}
+
 .badge-count {
   display: inline-block;
   background: #ef7d2d;
@@ -625,6 +701,66 @@
   border-radius: 50px;
   padding: 0.24rem 0.7rem;
   font-size: 0.8rem;
+}
+
+.badge-count-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.badge-count-number {
+  font-weight: 700;
+}
+
+.badge-mail-icon {
+  position: relative;
+  width: 18px;
+  height: 12px;
+  display: inline-block;
+  border: 2px solid #fff;
+  border-radius: 2px;
+  box-sizing: border-box;
+  background:
+    linear-gradient(
+      135deg,
+      transparent 45%,
+      #fff 46%,
+      #fff 54%,
+      transparent 55%
+    ),
+    linear-gradient(
+      225deg,
+      transparent 45%,
+      #fff 46%,
+      #fff 54%,
+      transparent 55%
+    );
+}
+
+.badge-mail-icon::before {
+  content: '';
+  position: absolute;
+  right: -6px;
+  bottom: -3px;
+  width: 10px;
+  height: 3px;
+  background: #fff;
+  border-radius: 2px;
+  transform: rotate(-35deg);
+}
+
+.badge-mail-icon::after {
+  content: '';
+  position: absolute;
+  right: -7.3px;
+  bottom: -0.5px;
+  width: 0;
+  height: 0;
+  border-left: 5px solid #fff;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  transform: rotate(-35deg);
 }
 
 .admin-items {
@@ -659,6 +795,75 @@
 .admin-item-card p {
   margin: 0.18rem 0;
   color: #414141;
+}
+
+.admin-status-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.65rem;
+}
+
+.status-card {
+  border: 1px solid #d8d8d8;
+  border-radius: 12px;
+  padding: 0.6rem 0.75rem;
+  background: #fafafa;
+  text-align: center;
+  cursor: pointer;
+  font-weight: 600;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.status-card span {
+  display: block;
+  font-size: 0.86rem;
+  color: #4a4a4a;
+}
+
+.status-card strong {
+  display: block;
+  font-family: 'Montserrat', sans-serif;
+  font-size: 1.2rem;
+  color: #262626;
+}
+
+.status-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.12);
+}
+
+.status-card.is-active {
+  border-width: 2px;
+}
+
+.status-card.status-green {
+  background: #eef8f0;
+  border-color: #62b96b;
+}
+
+.status-card.status-yellow {
+  background: #fff8e1;
+  border-color: #f1c232;
+}
+
+.status-card.status-red {
+  background: #ffeaea;
+  border-color: #e53935;
+}
+
+.admin-record-item.status-green {
+  border-left: 6px solid #2e7d32;
+  background: #f3fbf4;
+}
+
+.admin-record-item.status-yellow {
+  border-left: 6px solid #f1c232;
+  background: #fff7d6;
+}
+
+.admin-record-item.status-red {
+  border-left: 6px solid #e53935;
+  background: #ffeded;
 }
 
 @media (max-width: 960px) {
