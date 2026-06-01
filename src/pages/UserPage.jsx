@@ -654,6 +654,27 @@ const UserPage = () => {
 
   return (
     <section className="user-page">
+      <svg
+        class="decoracion-roja"
+        viewBox="0 0 1000 500"
+        preserveAspectRatio="none"
+      >
+        <path
+          d="M0,150 Q50,150 50,200 T5,300 "
+          stroke="red"
+          fill="transparent"
+          stroke-width="3"
+          stroke-dasharray="5,5"
+        />
+
+        <path
+          d="M998,300 Q950,250 950,150 T1000,50"
+          stroke="red"
+          fill="transparent"
+          stroke-width="3"
+          stroke-dasharray="5,5"
+        />
+      </svg>
       <div className="page-intro">
         <h2>Ruta de {processes?.[0]?.nombre ?? "Proceso"}</h2>
         <p>
