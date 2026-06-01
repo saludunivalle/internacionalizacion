@@ -68,6 +68,19 @@ export const apiGet = (path, token, config = {}) =>
 export const apiPost = (path, body, token, config = {}) =>
 	apiPublic.post(path, body, getAuthConfig(token, config))
 
+export const apiPostForm = (path, formData, token, config = {}) =>
+	apiPublic.post(
+		path,
+		formData,
+		getAuthConfig(token, {
+			...config,
+			headers: {
+				...(config.headers ?? {}),
+				'Content-Type': 'multipart/form-data',
+			},
+		}),
+	)
+
 export const apiPatch = (path, body, token, config = {}) =>
 	apiPublic.patch(path, body, getAuthConfig(token, config))
 
