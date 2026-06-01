@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import {
   apiGetAllSheets,
   apiPost,
-  apiPostForm,
   getSheetRows,
   isUnauthorizedError,
   pickValue,
@@ -42,6 +41,13 @@ const parseAdjunto = (row, index) => ({
   id: String(pickValue(row, ["id"], 0) ?? index + 1),
   idActividad: String(pickValue(row, ["id_actividad", "actividad"], 1) ?? ""),
   nombre: String(pickValue(row, ["nombre"], 2) ?? `Adjunto ${index + 1}`),
+});
+
+const parseDocumento = (row, index) => ({
+  id: String(pickValue(row, ["id"], 0) ?? index + 1),
+  idRegistro: String(pickValue(row, ["id_registro", "registro"], 1) ?? ""),
+  url: String(pickValue(row, ["url", "url_documento"], 2) ?? ""),
+  fechaSubida: String(pickValue(row, ["fecha_subida", "fecha"], 3) ?? ""),
 });
 
 const parseActor = (row, index) => ({
@@ -168,8 +174,8 @@ const UserPage = () => {
   const [formMessage, setFormMessage] = useState("");
   const [formData, setFormData] = useState({
     observacion: "",
+    urlSoporte: "",
     urlDocumento: "",
-    file: null,
   });
 
   const activitiesByProcess = useMemo(() => {
@@ -289,7 +295,6 @@ const UserPage = () => {
         "actividad_actor",
         "actores",
       ]);
-
       const parsedProcesos = procesosRows.map(parseProceso);
       const parsedActividades = actividadesRows.map(parseActividad);
       const parsedAdjuntos = adjuntosRows.map(parseAdjunto);
@@ -322,11 +327,20 @@ const UserPage = () => {
       }
 
       const registrosRows = getSheetRows(sheetMap, "REGISTROS", ["registros"]);
+      const documentosRows = getSheetRows(sheetMap, "DOCUMENTOS", [
+        "documentos",
+      ]);
       const solicitudesRows = getSheetRows(sheetMap, "SOLICITUDES", [
         "solicitudes",
       ]);
       const parsedRegistros = registrosRows.map(parseRegistro);
+      const parsedDocumentos = documentosRows.map(parseDocumento);
       const parsedSolicitudes = solicitudesRows.map(parseSolicitud);
+      const documentoByRegistro = new Map();
+      parsedDocumentos.forEach((documento) => {
+        if (!documento.idRegistro) return;
+        documentoByRegistro.set(String(documento.idRegistro), documento);
+      });
       const ownRegistros = foundUser
         ? parsedRegistros.filter(
             (registro) => String(registro.idUsuario) === String(foundUser.id),
@@ -339,8 +353,14 @@ const UserPage = () => {
           )
         : [];
 
-      ownRegistros.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-      setMyRecords(ownRegistros);
+      const enrichedRegistros = ownRegistros
+        .map((registro) => ({
+          ...registro,
+          documentoUrl: documentoByRegistro.get(String(registro.id))?.url ?? "",
+        }))
+        .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+      setMyRecords(enrichedRegistros);
       setMySolicitudes(ownSolicitudes);
 
       setSelectedProcessId((prev) => {
@@ -405,11 +425,6 @@ const UserPage = () => {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleFileChange = (event) => {
-    const file = event.target.files?.[0] ?? null;
-    setFormData((prev) => ({ ...prev, file }));
-  };
-
   const handleProcessChange = (event) => {
     setSelectedProcessId(event.target.value);
     setFormMessage("");
@@ -436,7 +451,8 @@ const UserPage = () => {
       return;
     }
 
-    const cleanUrl = formData.urlDocumento.trim();
+    const cleanSupportUrl = formData.urlSoporte.trim();
+    const cleanDocumentUrl = formData.urlDocumento.trim();
     let requiresAttachment;
 
     setFormLoading(true);
@@ -449,6 +465,9 @@ const UserPage = () => {
       });
       const sheetMap = await apiGetAllSheets(auth.token);
       const usersRows = getSheetRows(sheetMap, "USUARIOS", ["usuarios"]);
+      const documentosRows = getSheetRows(sheetMap, "DOCUMENTOS", [
+        "documentos",
+      ]);
       const registrosRows = getSheetRows(sheetMap, "REGISTROS", ["registros"]);
       const solicitudesRows = getSheetRows(sheetMap, "SOLICITUDES", [
         "solicitudes",
@@ -514,9 +533,9 @@ const UserPage = () => {
         return;
       }
 
-      if (requiresAttachment && !formData.file) {
+      if (requiresAttachment && !cleanDocumentUrl) {
         setFormMessage(
-          "Debes adjuntar un archivo para completar la actividad.",
+          "Debes indicar la URL del documento para completar la actividad.",
         );
         return;
       }
@@ -534,41 +553,15 @@ const UserPage = () => {
       }
 
       const nextRegistroId = getNextId(registrosRows);
-      const documentosRows = requiresAttachment
-        ? getSheetRows(sheetMap, "DOCUMENTOS", ["documentos"])
-        : [];
+
       const nextSolicitudId = getNextId(solicitudesRows);
       const currentTimestamp = new Date().toISOString();
       const currentDate = new Date().toISOString().slice(0, 10);
-      let uploadedUrl = cleanUrl;
-      let documentoId = null;
-      let fechaSubida = null;
-
-      if (requiresAttachment) {
-        documentoId = getNextId(documentosRows);
-        fechaSubida = new Date().toISOString();
-        const payload = new FormData();
-        payload.append("file", formData.file);
-        console.log("[UserPage] Subiendo archivo", {
-          documentoId,
-          fileName: formData.file?.name ?? "",
-        });
-        const uploadResponse = await apiPostForm(
-          "api/sheets/documentos/upload",
-          payload,
-          auth.token,
-        );
-        const uploadData =
-          uploadResponse?.data?.data ?? uploadResponse?.data ?? {};
-        uploadedUrl = String(uploadData?.url ?? "").trim();
-        console.log("[UserPage] Respuesta upload", {
-          status: uploadResponse?.status,
-          url: uploadedUrl,
-        });
-        if (!uploadedUrl) {
-          throw new Error("No se obtuvo la URL del archivo cargado.");
-        }
-      }
+      const uploadedUrl = cleanSupportUrl;
+      const nextDocumentoId = requiresAttachment
+        ? getNextId(documentosRows)
+        : null;
+      const fechaSubida = requiresAttachment ? new Date().toISOString() : null;
 
       let solicitudId = solicitudToUse?.id ?? null;
       if (!solicitudId) {
@@ -610,19 +603,19 @@ const UserPage = () => {
         auth.token,
       );
 
-      if (requiresAttachment && documentoId && uploadedUrl && fechaSubida) {
-        console.log("[UserPage] Guardando documento en hoja", {
-          documentoId,
-          registroId: nextRegistroId,
-          url: uploadedUrl,
-        });
+      if (
+        requiresAttachment &&
+        nextDocumentoId &&
+        cleanDocumentUrl &&
+        fechaSubida
+      ) {
         await apiPost(
           "/api/sheets/DOCUMENTOS/rows",
           {
             values: [
-              documentoId,
+              nextDocumentoId,
               String(nextRegistroId),
-              uploadedUrl,
+              cleanDocumentUrl,
               fechaSubida,
             ],
           },
@@ -632,7 +625,7 @@ const UserPage = () => {
 
       const refreshSheetMap = await apiGetAllSheets(auth.token);
       hydrateFromSheets(refreshSheetMap);
-      setFormData({ observacion: "", urlDocumento: "", file: null });
+      setFormData({ observacion: "", urlSoporte: "", urlDocumento: "" });
       setFormMessage(
         solicitudToUse
           ? "Registro enviado correctamente para la actividad."
@@ -778,32 +771,34 @@ const UserPage = () => {
                         required
                       />
 
+                      <label htmlFor="urlSoporte">
+                        URL de soporte (opcional)
+                      </label>
+                      <input
+                        id="urlSoporte"
+                        name="urlSoporte"
+                        type="url"
+                        placeholder="https://ejemplo.com/documento-soporte"
+                        value={formData.urlSoporte}
+                        onChange={handleChange}
+                      />
+
                       {requiresAttachment ? (
                         <>
-                          <label htmlFor="adjunto">Adjuntar archivo</label>
-                          <input
-                            id="adjunto"
-                            name="adjunto"
-                            type="file"
-                            onChange={handleFileChange}
-                            required
-                          />
-                        </>
-                      ) : (
-                        <>
                           <label htmlFor="urlDocumento">
-                            URL del documento soporte
+                            URL del documento exigido
                           </label>
                           <input
                             id="urlDocumento"
                             name="urlDocumento"
                             type="url"
-                            placeholder="https://ejemplo.com/mi-documento"
+                            placeholder="https://ejemplo.com/documento-obligatorio"
                             value={formData.urlDocumento}
                             onChange={handleChange}
+                            required
                           />
                         </>
-                      )}
+                      ) : null}
 
                       <button type="submit" disabled={formLoading}>
                         {formLoading ? "Guardando..." : "Completar"}
@@ -837,7 +832,18 @@ const UserPage = () => {
                             target="_blank"
                             rel="noreferrer"
                           >
-                            Ver documento enviado
+                            Ver documento soporte
+                          </a>
+                        </p>
+                      ) : null}
+                      {activityRecord.documentoUrl ? (
+                        <p>
+                          <a
+                            href={activityRecord.documentoUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Ver documento obligatorio
                           </a>
                         </p>
                       ) : null}
