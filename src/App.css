@@ -13,7 +13,7 @@
 
 .decoracion-roja {
   position: fixed; /* Para que sigan la pantalla */
-  top: 10;
+  top: 11;
   left: 0;
   right: 10;
   width: 100%;
