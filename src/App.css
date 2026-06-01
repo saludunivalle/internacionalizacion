@@ -11,6 +11,17 @@
   padding: 24px 18px 48px;
 }
 
+.decoracion-roja {
+  position: fixed; /* Para que sigan la pantalla */
+  top: 10;
+  left: 0;
+  right: 10;
+  width: 100%;
+  height: 100%;
+  pointer-events: none; /* CRÍTICO: Permite hacer clic a través de la línea */
+         /* Detrás de todo el contenido */
+}
+
 .app-header {
   min-height: 92px;
   background: linear-gradient(180deg, #dedede 0%, #d5d5d5 100%);
@@ -28,8 +39,9 @@
 }
 
 .header-logo {
-  width: min(100%, 310px);
+  width: min(100%, 170px);
   height: auto;
+  max-height: 126px;
 }
 
 .header-title {

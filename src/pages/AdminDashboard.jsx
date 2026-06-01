@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   apiGetAllSheets,
   apiPost,
+  apiPostForm,
   apiPatch,
   getSheetRows,
   isUnauthorizedError,
@@ -14,6 +15,16 @@ const parseProceso = (row, index) => ({
   id: String(pickValue(row, ["id"], 0) ?? index + 1),
   nombre: String(pickValue(row, ["nombre"], 1) ?? `Proceso ${index + 1}`),
 });
+
+const parseBooleanFlag = (value) => {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) return null;
+  if (["true", "1", "si", "yes", "y"].includes(normalized)) return true;
+  if (["false", "0", "no", "n"].includes(normalized)) return false;
+  return null;
+};
 
 const parsePrograma = (row, index) => ({
   id: String(pickValue(row, ["id"], 0) ?? index + 1),
@@ -32,6 +43,8 @@ const parseActividad = (row, index) => ({
   ),
   tiempoMax: String(pickValue(row, ["tiempo_max", "tiempomax"], 4) ?? ""),
   orden: Number(pickValue(row, ["orden", "order"], 5) ?? index + 1),
+  docente: parseBooleanFlag(pickValue(row, ["docente"], 6)),
+  adjunto: parseBooleanFlag(pickValue(row, ["adjunto", "archivo"], 7)),
 });
 
 const parseAdjunto = (row, index) => ({
@@ -212,6 +225,23 @@ const matchesActivity = (activityRef, activity) => {
   return ref === String(activity.id) || ref === String(activity.orden);
 };
 
+const getNextActivityId = (processActivities, activityId) => {
+  if (!Array.isArray(processActivities) || processActivities.length === 0) {
+    return String(activityId ?? "");
+  }
+
+  const currentIndex = processActivities.findIndex(
+    (activity) => String(activity.id) === String(activityId),
+  );
+
+  if (currentIndex < 0) {
+    return String(activityId ?? "");
+  }
+
+  const nextActivity = processActivities[currentIndex + 1];
+  return nextActivity ? String(nextActivity.id) : String(activityId ?? "");
+};
+
 const AdminDashboard = () => {
   const navigate = useNavigate();
   const { auth, logout, isAdmin } = useAuth();
@@ -241,6 +271,7 @@ const AdminDashboard = () => {
     programa: "",
     observacion: "",
     urlDocumento: "",
+    file: null,
   });
   const [startLoading, setStartLoading] = useState(false);
   const [startMessage, setStartMessage] = useState("");
@@ -351,6 +382,8 @@ const AdminDashboard = () => {
   const firstActivity = firstProcessActivities[0] ?? null;
   const lastActivityFirstProcess =
     processOneActivities[processOneActivities.length - 1] ?? null;
+  const firstActivityOwnedByAdmin = firstActivity?.docente !== true;
+  const firstActivityRequiresAttachment = firstActivity?.adjunto === true;
 
   const resolveSolicitudLabel = useCallback(
     (solicitud) => {
@@ -770,6 +803,20 @@ const AdminDashboard = () => {
     });
   }, []);
 
+  const handleActivityFileChange = useCallback((activityId, file) => {
+    setActivityForms((prev) => {
+      const key = String(activityId);
+      const current = prev[key] ?? {};
+      return {
+        ...prev,
+        [key]: {
+          ...current,
+          file,
+        },
+      };
+    });
+  }, []);
+
   const handleExtraEmailChange = useCallback((activityId, index, value) => {
     setActivityForms((prev) => {
       const key = String(activityId);
@@ -811,6 +858,11 @@ const AdminDashboard = () => {
     setStartForm((prev) => ({ ...prev, [name]: value }));
   };
 
+  const handleStartFileChange = (event) => {
+    const file = event.target.files?.[0] ?? null;
+    setStartForm((prev) => ({ ...prev, file }));
+  };
+
   const handleStartProcess = async (event) => {
     event.preventDefault();
     setStartMessage("");
@@ -822,11 +874,26 @@ const AdminDashboard = () => {
       return;
     }
 
+    if (!firstActivityOwnedByAdmin) {
+      setStartMessage(
+        "El primer paso corresponde al docente y debe iniciarse desde su vista.",
+      );
+      setStartMessageType("error");
+      return;
+    }
+
     const nombre = startForm.nombre.trim();
     const correo = startForm.correo.trim();
     const programaInput = startForm.programa.trim();
     const observacion = startForm.observacion.trim();
     const urlDocumento = startForm.urlDocumento.trim();
+    const requiresAttachment = firstActivityRequiresAttachment;
+
+    if (requiresAttachment && !startForm.file) {
+      setStartMessage("Debes adjuntar un archivo para iniciar el proceso.");
+      setStartMessageType("error");
+      return;
+    }
 
     if (!nombre || !correo) {
       setStartMessage("Debes indicar nombre y correo para iniciar el proceso.");
@@ -869,6 +936,9 @@ const AdminDashboard = () => {
         "solicitudes",
       ]);
       const registrosRows = getSheetRows(sheetMap, "REGISTROS", ["registros"]);
+      const documentosRows = requiresAttachment
+        ? getSheetRows(sheetMap, "DOCUMENTOS", ["documentos"])
+        : [];
       const datosInicialesRows = getSheetRows(
         sheetMap,
         "DATOS_INICIALES_SOLICITUD",
@@ -888,7 +958,6 @@ const AdminDashboard = () => {
           "/api/sheets/USUARIOS/rows",
           {
             values: [nextUserId, correo, nombres, apellidos, ""],
-            userEmailColumnIndex: 1,
           },
           auth.token,
         );
@@ -902,7 +971,34 @@ const AdminDashboard = () => {
       }
 
       const nextSolicitudId = getNextId(solicitudesRows);
+      const nextRegistroId = getNextId(registrosRows);
+      let uploadedUrl = urlDocumento;
+      let documentoId = null;
+      let fechaSubida = null;
+
+      if (requiresAttachment) {
+        documentoId = getNextId(documentosRows);
+        fechaSubida = new Date().toISOString();
+        const payload = new FormData();
+        payload.append("file", startForm.file);
+        const uploadResponse = await apiPostForm(
+          "/documentos/upload",
+          payload,
+          auth.token,
+        );
+        const uploadData =
+          uploadResponse?.data?.data ?? uploadResponse?.data ?? {};
+        uploadedUrl = String(uploadData?.url ?? "").trim();
+        if (!uploadedUrl) {
+          throw new Error("No se obtuvo la URL del archivo cargado.");
+        }
+      }
       const currentDate = new Date().toISOString().slice(0, 10);
+      const nextActivityId = getNextActivityId(
+        firstProcessActivities,
+        firstActivity.id,
+      );
+
       await apiPost(
         "/api/sheets/SOLICITUDES/rows",
         {
@@ -910,14 +1006,13 @@ const AdminDashboard = () => {
             nextSolicitudId,
             String(currentUser.id),
             String(firstProcessId),
-            String(firstActivity.id),
+            nextActivityId,
             currentDate,
           ],
         },
         auth.token,
       );
 
-      const nextRegistroId = getNextId(registrosRows);
       const currentTimestamp = new Date().toISOString();
       await apiPost(
         "/api/sheets/REGISTROS/rows",
@@ -930,12 +1025,27 @@ const AdminDashboard = () => {
             currentTimestamp,
             observacion,
             true,
-            urlDocumento,
+            uploadedUrl,
             "",
           ],
         },
         auth.token,
       );
+
+      if (requiresAttachment && documentoId && uploadedUrl && fechaSubida) {
+        await apiPost(
+          "/api/sheets/DOCUMENTOS/rows",
+          {
+            values: [
+              documentoId,
+              String(nextRegistroId),
+              uploadedUrl,
+              fechaSubida,
+            ],
+          },
+          auth.token,
+        );
+      }
 
       const nextDatosId = getNextId(datosInicialesRows);
       await apiPost(
@@ -960,6 +1070,7 @@ const AdminDashboard = () => {
         programa: "",
         observacion: "",
         urlDocumento: "",
+        file: null,
       });
       setStartMessage("Solicitud iniciada correctamente.");
       setStartMessageType("info");
@@ -984,6 +1095,13 @@ const AdminDashboard = () => {
     const solicitudId = record?.solicitudId ?? record?.idSolicitud;
     if (!solicitudId || !record?.idActividad) return;
     const fecha = new Date().toISOString().slice(0, 10);
+    const processActivities = activitiesByProcess.get(
+      String(record.idProceso ?? ""),
+    );
+    const nextActivityId = getNextActivityId(
+      processActivities ?? [],
+      record.idActividad,
+    );
 
     await apiPatch(
       `/api/sheets/registros/${solicitudId}/actividades/${record.idActividad}/aprobado`,
@@ -993,7 +1111,7 @@ const AdminDashboard = () => {
 
     await apiPatch(
       `/api/sheets/solicitudes/${solicitudId}/actividad`,
-      { actividad_actual: record.idActividad, fecha },
+      { actividad_actual: nextActivityId, fecha },
       auth.token,
     );
 
@@ -1017,6 +1135,9 @@ const AdminDashboard = () => {
     const formValues = activityForms[key] ?? {};
     const observacion = String(formValues.observacion ?? "").trim();
     const urlDocumento = String(formValues.urlDocumento ?? "").trim();
+    const isDocenteActivity = activity.docente === true;
+    const requiresAttachment = activity.adjunto === true;
+    const file = formValues.file ?? null;
     const needsInitialData = isInitialStep(activity, selectedSolicitud);
     const nombre = String(formValues.nombre ?? "").trim();
     const correo = String(formValues.correo ?? "").trim();
@@ -1046,8 +1167,20 @@ const AdminDashboard = () => {
       return;
     }
 
+    if (isDocenteActivity) {
+      setModalMessage("Esta actividad corresponde al docente.");
+      setModalMessageType("error");
+      return;
+    }
+
     if (!observacion) {
       setModalMessage("Debes escribir una observacion para completar el paso.");
+      setModalMessageType("error");
+      return;
+    }
+
+    if (requiresAttachment && !file) {
+      setModalMessage("Debes adjuntar un archivo para completar la actividad.");
       setModalMessageType("error");
       return;
     }
@@ -1088,6 +1221,9 @@ const AdminDashboard = () => {
     try {
       const sheetMap = await apiGetAllSheets(auth.token);
       const registrosRows = getSheetRows(sheetMap, "REGISTROS", ["registros"]);
+      const documentosRows = requiresAttachment
+        ? getSheetRows(sheetMap, "DOCUMENTOS", ["documentos"])
+        : [];
       const datosInicialesRows = getSheetRows(
         sheetMap,
         "DATOS_INICIALES_SOLICITUD",
@@ -1095,6 +1231,27 @@ const AdminDashboard = () => {
       );
 
       const nextRegistroId = getNextId(registrosRows);
+      let uploadedUrl = urlDocumento;
+      let documentoId = null;
+      let fechaSubida = null;
+
+      if (requiresAttachment) {
+        documentoId = getNextId(documentosRows);
+        fechaSubida = new Date().toISOString();
+        const payload = new FormData();
+        payload.append("file", file);
+        const uploadResponse = await apiPostForm(
+          "/documentos/upload",
+          payload,
+          auth.token,
+        );
+        const uploadData =
+          uploadResponse?.data?.data ?? uploadResponse?.data ?? {};
+        uploadedUrl = String(uploadData?.url ?? "").trim();
+        if (!uploadedUrl) {
+          throw new Error("No se obtuvo la URL del archivo cargado.");
+        }
+      }
       const timestamp = new Date().toISOString();
       await apiPost(
         "/api/sheets/REGISTROS/rows",
@@ -1107,17 +1264,39 @@ const AdminDashboard = () => {
             timestamp,
             observacion,
             true,
-            urlDocumento,
+            uploadedUrl,
             correosExtraValue,
           ],
         },
         auth.token,
       );
 
+      if (requiresAttachment && documentoId && uploadedUrl && fechaSubida) {
+        await apiPost(
+          "/api/sheets/DOCUMENTOS/rows",
+          {
+            values: [
+              documentoId,
+              String(nextRegistroId),
+              uploadedUrl,
+              fechaSubida,
+            ],
+          },
+          auth.token,
+        );
+      }
+
       const fecha = new Date().toISOString().slice(0, 10);
+      const processActivitiesForUpdate = activitiesByProcess.get(
+        String(selectedSolicitud.idProceso ?? ""),
+      );
+      const nextActivityId = getNextActivityId(
+        processActivitiesForUpdate ?? [],
+        activity.id,
+      );
       await apiPatch(
         `/api/sheets/solicitudes/${selectedSolicitud.id}/actividad`,
-        { actividad_actual: String(activity.id), fecha },
+        { actividad_actual: nextActivityId, fecha },
         auth.token,
       );
 
@@ -1183,6 +1362,7 @@ const AdminDashboard = () => {
           correo: "",
           programa: "",
           correosExtra: [""],
+          file: null,
         },
       }));
     } catch (submitError) {
@@ -1204,6 +1384,27 @@ const AdminDashboard = () => {
 
   return (
     <section className="admin-page">
+      <svg
+        class="decoracion-roja"
+        viewBox="0 0 1000 500"
+        preserveAspectRatio="none"
+      >
+        <path
+          d="M0,150 Q50,150 50,200 T5,300 "
+          stroke="red"
+          fill="transparent"
+          stroke-width="3"
+          stroke-dasharray="5,5"
+        />
+
+        <path
+          d="M998,300 Q950,250 950,150 T1000,50"
+          stroke="red"
+          fill="transparent"
+          stroke-width="3"
+          stroke-dasharray="5,5"
+        />
+      </svg>
       <div className="page-intro">
         <h2>Dashboard Administrativo</h2>
         <p>
@@ -1250,69 +1451,94 @@ const AdminDashboard = () => {
             </button>
 
             {showStartForm ? (
-              <form className="admin-start-form" onSubmit={handleStartProcess}>
-                <div className="admin-start-meta">
-                  <p>
-                    <strong>Proceso:</strong> {firstProcessLabel}
-                  </p>
-                  <p>
-                    <strong>Actividad inicial:</strong> {firstActivityLabel}
-                  </p>
-                </div>
+              firstActivityOwnedByAdmin ? (
+                <form
+                  className="admin-start-form"
+                  onSubmit={handleStartProcess}
+                >
+                  <div className="admin-start-meta">
+                    <p>
+                      <strong>Proceso:</strong> {firstProcessLabel}
+                    </p>
+                    <p>
+                      <strong>Actividad inicial:</strong> {firstActivityLabel}
+                    </p>
+                  </div>
 
-                <label htmlFor="startNombre">Nombre</label>
-                <input
-                  id="startNombre"
-                  name="nombre"
-                  type="text"
-                  value={startForm.nombre}
-                  onChange={handleStartFormChange}
-                  required
-                />
+                  <label htmlFor="startNombre">Nombre</label>
+                  <input
+                    id="startNombre"
+                    name="nombre"
+                    type="text"
+                    value={startForm.nombre}
+                    onChange={handleStartFormChange}
+                    required
+                  />
 
-                <label htmlFor="startCorreo">Correo</label>
-                <input
-                  id="startCorreo"
-                  name="correo"
-                  type="email"
-                  value={startForm.correo}
-                  onChange={handleStartFormChange}
-                  required
-                />
+                  <label htmlFor="startCorreo">Correo</label>
+                  <input
+                    id="startCorreo"
+                    name="correo"
+                    type="email"
+                    value={startForm.correo}
+                    onChange={handleStartFormChange}
+                    required
+                  />
 
-                <label htmlFor="startPrograma">Programa</label>
-                <input
-                  id="startPrograma"
-                  name="programa"
-                  type="text"
-                  list="programas-list"
-                  value={startForm.programa}
-                  onChange={handleStartFormChange}
-                  required
-                />
+                  <label htmlFor="startPrograma">Programa</label>
+                  <input
+                    id="startPrograma"
+                    name="programa"
+                    type="text"
+                    list="programas-list"
+                    value={startForm.programa}
+                    onChange={handleStartFormChange}
+                    required
+                  />
 
-                <label htmlFor="startObservacion">Observacion inicial</label>
-                <textarea
-                  id="startObservacion"
-                  name="observacion"
-                  rows={3}
-                  value={startForm.observacion}
-                  onChange={handleStartFormChange}
-                />
+                  <label htmlFor="startObservacion">Observacion inicial</label>
+                  <textarea
+                    id="startObservacion"
+                    name="observacion"
+                    rows={3}
+                    value={startForm.observacion}
+                    onChange={handleStartFormChange}
+                  />
 
-                <label htmlFor="startUrl">URL del documento</label>
-                <input
-                  id="startUrl"
-                  name="urlDocumento"
-                  type="url"
-                  value={startForm.urlDocumento}
-                  onChange={handleStartFormChange}
-                />
+                  {firstActivityRequiresAttachment ? (
+                    <>
+                      <label htmlFor="startFile">Adjuntar archivo</label>
+                      <input
+                        id="startFile"
+                        name="file"
+                        type="file"
+                        onChange={handleStartFileChange}
+                        required
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <label htmlFor="startUrl">URL del documento</label>
+                      <input
+                        id="startUrl"
+                        name="urlDocumento"
+                        type="url"
+                        value={startForm.urlDocumento}
+                        onChange={handleStartFormChange}
+                      />
+                    </>
+                  )}
 
-                <button type="submit" disabled={startLoading}>
-                  {startLoading ? "Guardando..." : "Crear solicitud"}
-                </button>
-              </form>
+                  <button type="submit" disabled={startLoading}>
+                    {startLoading ? "Guardando..." : "Crear solicitud"}
+                  </button>
+                </form>
+              ) : (
+                <p className="message info">
+                  El primer paso corresponde al docente y debe iniciarse desde
+                  su vista.
+                </p>
+              )
             ) : null}
 
             {startMessage ? (
@@ -1652,10 +1878,14 @@ const AdminDashboard = () => {
                   const programaValue =
                     formValues.programa ?? initialData?.programa ?? "";
                   const isSubmitting = submittingActivity === formKey;
+                  const isDocenteActivity = activity.docente === true;
+                  const requiresAttachment = activity.adjunto === true;
                   const isBlocked =
                     !registro &&
-                    nextEditableActivityId &&
-                    String(activity.id) !== String(nextEditableActivityId);
+                    (isDocenteActivity ||
+                      (nextEditableActivityId &&
+                        String(activity.id) !==
+                          String(nextEditableActivityId)));
                   const isLastStep = index === selectedFlow.length - 1;
                   const isFinalEmailStep =
                     idToNumber(selectedSolicitud?.idProceso) === 1 &&
@@ -1835,21 +2065,42 @@ const AdminDashboard = () => {
                               }
                             />
 
-                            <label htmlFor={`url-${formKey}`}>
-                              URL del documento
-                            </label>
-                            <input
-                              id={`url-${formKey}`}
-                              type="url"
-                              value={formValues.urlDocumento ?? ""}
-                              onChange={(event) =>
-                                handleActivityFormChange(
-                                  formKey,
-                                  "urlDocumento",
-                                  event.target.value,
-                                )
-                              }
-                            />
+                            {requiresAttachment ? (
+                              <>
+                                <label htmlFor={`file-${formKey}`}>
+                                  Adjuntar archivo
+                                </label>
+                                <input
+                                  id={`file-${formKey}`}
+                                  type="file"
+                                  onChange={(event) =>
+                                    handleActivityFileChange(
+                                      formKey,
+                                      event.target.files?.[0] ?? null,
+                                    )
+                                  }
+                                  required
+                                />
+                              </>
+                            ) : (
+                              <>
+                                <label htmlFor={`url-${formKey}`}>
+                                  URL del documento
+                                </label>
+                                <input
+                                  id={`url-${formKey}`}
+                                  type="url"
+                                  value={formValues.urlDocumento ?? ""}
+                                  onChange={(event) =>
+                                    handleActivityFormChange(
+                                      formKey,
+                                      "urlDocumento",
+                                      event.target.value,
+                                    )
+                                  }
+                                />
+                              </>
+                            )}
 
                             {isFinalEmailStep ? (
                               <div className="extra-emails">
@@ -1895,9 +2146,11 @@ const AdminDashboard = () => {
                           </form>
                         ) : (
                           <p className="disabled-note">
-                            {isBlocked
-                              ? "Actividad bloqueada hasta completar el paso anterior."
-                              : "No hay registro en esta actividad."}
+                            {isDocenteActivity
+                              ? "Actividad asignada al docente."
+                              : isBlocked
+                                ? "Actividad bloqueada hasta completar el paso anterior."
+                                : "No hay registro en esta actividad."}
                           </p>
                         )}
                         {isLastStep ? (
