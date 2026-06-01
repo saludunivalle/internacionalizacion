@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import {
   apiGetAllSheets,
   apiPost,
-  apiPostForm,
   apiPatch,
   getSheetRows,
   isUnauthorizedError,
@@ -51,6 +50,13 @@ const parseAdjunto = (row, index) => ({
   id: String(pickValue(row, ["id"], 0) ?? index + 1),
   idActividad: String(pickValue(row, ["id_actividad", "actividad"], 1) ?? ""),
   nombre: String(pickValue(row, ["nombre"], 2) ?? `Adjunto ${index + 1}`),
+});
+
+const parseDocumento = (row, index) => ({
+  id: String(pickValue(row, ["id"], 0) ?? index + 1),
+  id_registro: String(pickValue(row, ["id_registro", "registro"], 1) ?? ""),
+  url: String(pickValue(row, ["url", "url_documento"], 2) ?? ""),
+  fecha_subida: String(pickValue(row, ["fecha_subida", "fecha"], 3) ?? ""),
 });
 
 const parseActor = (row, index) => ({
@@ -270,8 +276,8 @@ const AdminDashboard = () => {
     correo: "",
     programa: "",
     observacion: "",
+    urlSoporte: "",
     urlDocumento: "",
-    file: null,
   });
   const [startLoading, setStartLoading] = useState(false);
   const [startMessage, setStartMessage] = useState("");
@@ -417,6 +423,7 @@ const AdminDashboard = () => {
       "actores",
     ]);
     const registrosRows = getSheetRows(sheetMap, "REGISTROS", ["registros"]);
+    const documentosRows = getSheetRows(sheetMap, "DOCUMENTOS", ["documentos"]);
     const solicitudesRows = getSheetRows(sheetMap, "SOLICITUDES", [
       "solicitudes",
     ]);
@@ -439,6 +446,7 @@ const AdminDashboard = () => {
     const parsedSolicitudes = solicitudesRows.map(parseSolicitud);
     const parsedUsuarios = usuariosRows.map(parseUsuario);
     const parsedRegistros = registrosRows.map(parseRegistro);
+    const parsedDocumentos = documentosRows.map(parseDocumento);
     const parsedDatosIniciales = datosInicialesRows.map(parseDatosIniciales);
 
     const orderedProcesos = parsedProcesos
@@ -471,6 +479,12 @@ const AdminDashboard = () => {
       initialDataMap.set(String(data.idSolicitud), data);
     });
 
+    const documentoByRegistro = new Map();
+    parsedDocumentos.forEach((documento) => {
+      if (!documento.id_registro) return;
+      documentoByRegistro.set(String(documento.id_registro), documento);
+    });
+
     const solicitudesById = new Map();
     parsedSolicitudes.forEach((solicitud) => {
       solicitudesById.set(String(solicitud.id), solicitud);
@@ -498,6 +512,7 @@ const AdminDashboard = () => {
         return {
           ...registro,
           dateLabel: formatDate(registro.timestamp),
+          documentoUrl: documentoByRegistro.get(String(registro.id))?.url ?? "",
           userLabel: formatUserLabel(
             initialData?.nombre ||
               usersByKey.get(String(registro.idUsuario)) ||
@@ -803,20 +818,6 @@ const AdminDashboard = () => {
     });
   }, []);
 
-  const handleActivityFileChange = useCallback((activityId, file) => {
-    setActivityForms((prev) => {
-      const key = String(activityId);
-      const current = prev[key] ?? {};
-      return {
-        ...prev,
-        [key]: {
-          ...current,
-          file,
-        },
-      };
-    });
-  }, []);
-
   const handleExtraEmailChange = useCallback((activityId, index, value) => {
     setActivityForms((prev) => {
       const key = String(activityId);
@@ -858,11 +859,6 @@ const AdminDashboard = () => {
     setStartForm((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleStartFileChange = (event) => {
-    const file = event.target.files?.[0] ?? null;
-    setStartForm((prev) => ({ ...prev, file }));
-  };
-
   const handleStartProcess = async (event) => {
     event.preventDefault();
     setStartMessage("");
@@ -886,11 +882,14 @@ const AdminDashboard = () => {
     const correo = startForm.correo.trim();
     const programaInput = startForm.programa.trim();
     const observacion = startForm.observacion.trim();
+    const supportUrl = startForm.urlSoporte.trim();
     const urlDocumento = startForm.urlDocumento.trim();
     const requiresAttachment = firstActivityRequiresAttachment;
 
-    if (requiresAttachment && !startForm.file) {
-      setStartMessage("Debes adjuntar un archivo para iniciar el proceso.");
+    if (requiresAttachment && !urlDocumento) {
+      setStartMessage(
+        "Debes indicar la URL del documento para iniciar el proceso.",
+      );
       setStartMessageType("error");
       return;
     }
@@ -932,13 +931,13 @@ const AdminDashboard = () => {
     try {
       const sheetMap = await apiGetAllSheets(auth.token);
       const usersRows = getSheetRows(sheetMap, "USUARIOS", ["usuarios"]);
+      const documentosRows = getSheetRows(sheetMap, "DOCUMENTOS", [
+        "documentos",
+      ]);
       const solicitudesRows = getSheetRows(sheetMap, "SOLICITUDES", [
         "solicitudes",
       ]);
       const registrosRows = getSheetRows(sheetMap, "REGISTROS", ["registros"]);
-      const documentosRows = requiresAttachment
-        ? getSheetRows(sheetMap, "DOCUMENTOS", ["documentos"])
-        : [];
       const datosInicialesRows = getSheetRows(
         sheetMap,
         "DATOS_INICIALES_SOLICITUD",
@@ -972,27 +971,10 @@ const AdminDashboard = () => {
 
       const nextSolicitudId = getNextId(solicitudesRows);
       const nextRegistroId = getNextId(registrosRows);
-      let uploadedUrl = urlDocumento;
-      let documentoId = null;
-      let fechaSubida = null;
-
-      if (requiresAttachment) {
-        documentoId = getNextId(documentosRows);
-        fechaSubida = new Date().toISOString();
-        const payload = new FormData();
-        payload.append("file", startForm.file);
-        const uploadResponse = await apiPostForm(
-          "/documentos/upload",
-          payload,
-          auth.token,
-        );
-        const uploadData =
-          uploadResponse?.data?.data ?? uploadResponse?.data ?? {};
-        uploadedUrl = String(uploadData?.url ?? "").trim();
-        if (!uploadedUrl) {
-          throw new Error("No se obtuvo la URL del archivo cargado.");
-        }
-      }
+      const nextDocumentoId = requiresAttachment
+        ? getNextId(documentosRows)
+        : null;
+      const fechaSubida = requiresAttachment ? new Date().toISOString() : null;
       const currentDate = new Date().toISOString().slice(0, 10);
       const nextActivityId = getNextActivityId(
         firstProcessActivities,
@@ -1025,21 +1007,26 @@ const AdminDashboard = () => {
             currentTimestamp,
             observacion,
             true,
-            uploadedUrl,
+            supportUrl,
             "",
           ],
         },
         auth.token,
       );
 
-      if (requiresAttachment && documentoId && uploadedUrl && fechaSubida) {
+      if (
+        requiresAttachment &&
+        nextDocumentoId &&
+        urlDocumento &&
+        fechaSubida
+      ) {
         await apiPost(
           "/api/sheets/DOCUMENTOS/rows",
           {
             values: [
-              documentoId,
+              nextDocumentoId,
               String(nextRegistroId),
-              uploadedUrl,
+              urlDocumento,
               fechaSubida,
             ],
           },
@@ -1069,8 +1056,8 @@ const AdminDashboard = () => {
         correo: "",
         programa: "",
         observacion: "",
+        urlSoporte: "",
         urlDocumento: "",
-        file: null,
       });
       setStartMessage("Solicitud iniciada correctamente.");
       setStartMessageType("info");
@@ -1134,10 +1121,10 @@ const AdminDashboard = () => {
     const key = String(activity.id);
     const formValues = activityForms[key] ?? {};
     const observacion = String(formValues.observacion ?? "").trim();
+    const supportUrl = String(formValues.urlSoporte ?? "").trim();
     const urlDocumento = String(formValues.urlDocumento ?? "").trim();
     const isDocenteActivity = activity.docente === true;
     const requiresAttachment = activity.adjunto === true;
-    const file = formValues.file ?? null;
     const needsInitialData = isInitialStep(activity, selectedSolicitud);
     const nombre = String(formValues.nombre ?? "").trim();
     const correo = String(formValues.correo ?? "").trim();
@@ -1179,8 +1166,10 @@ const AdminDashboard = () => {
       return;
     }
 
-    if (requiresAttachment && !file) {
-      setModalMessage("Debes adjuntar un archivo para completar la actividad.");
+    if (requiresAttachment && !urlDocumento) {
+      setModalMessage(
+        "Debes indicar la URL del documento para completar la actividad.",
+      );
       setModalMessageType("error");
       return;
     }
@@ -1220,10 +1209,10 @@ const AdminDashboard = () => {
     setModalMessageType("");
     try {
       const sheetMap = await apiGetAllSheets(auth.token);
+      const documentosRows = getSheetRows(sheetMap, "DOCUMENTOS", [
+        "documentos",
+      ]);
       const registrosRows = getSheetRows(sheetMap, "REGISTROS", ["registros"]);
-      const documentosRows = requiresAttachment
-        ? getSheetRows(sheetMap, "DOCUMENTOS", ["documentos"])
-        : [];
       const datosInicialesRows = getSheetRows(
         sheetMap,
         "DATOS_INICIALES_SOLICITUD",
@@ -1231,27 +1220,10 @@ const AdminDashboard = () => {
       );
 
       const nextRegistroId = getNextId(registrosRows);
-      let uploadedUrl = urlDocumento;
-      let documentoId = null;
-      let fechaSubida = null;
-
-      if (requiresAttachment) {
-        documentoId = getNextId(documentosRows);
-        fechaSubida = new Date().toISOString();
-        const payload = new FormData();
-        payload.append("file", file);
-        const uploadResponse = await apiPostForm(
-          "/documentos/upload",
-          payload,
-          auth.token,
-        );
-        const uploadData =
-          uploadResponse?.data?.data ?? uploadResponse?.data ?? {};
-        uploadedUrl = String(uploadData?.url ?? "").trim();
-        if (!uploadedUrl) {
-          throw new Error("No se obtuvo la URL del archivo cargado.");
-        }
-      }
+      const nextDocumentoId = requiresAttachment
+        ? getNextId(documentosRows)
+        : null;
+      const fechaSubida = requiresAttachment ? new Date().toISOString() : null;
       const timestamp = new Date().toISOString();
       await apiPost(
         "/api/sheets/REGISTROS/rows",
@@ -1264,21 +1236,26 @@ const AdminDashboard = () => {
             timestamp,
             observacion,
             true,
-            uploadedUrl,
+            supportUrl,
             correosExtraValue,
           ],
         },
         auth.token,
       );
 
-      if (requiresAttachment && documentoId && uploadedUrl && fechaSubida) {
+      if (
+        requiresAttachment &&
+        nextDocumentoId &&
+        urlDocumento &&
+        fechaSubida
+      ) {
         await apiPost(
           "/api/sheets/DOCUMENTOS/rows",
           {
             values: [
-              documentoId,
+              nextDocumentoId,
               String(nextRegistroId),
-              uploadedUrl,
+              urlDocumento,
               fechaSubida,
             ],
           },
@@ -1357,12 +1334,12 @@ const AdminDashboard = () => {
         ...prev,
         [key]: {
           observacion: "",
+          urlSoporte: "",
           urlDocumento: "",
           nombre: "",
           correo: "",
           programa: "",
           correosExtra: [""],
-          file: null,
         },
       }));
     } catch (submitError) {
@@ -1505,29 +1482,34 @@ const AdminDashboard = () => {
                     onChange={handleStartFormChange}
                   />
 
+                  <label htmlFor="startSupportUrl">
+                    URL de soporte (opcional)
+                  </label>
+                  <input
+                    id="startSupportUrl"
+                    name="urlSoporte"
+                    type="url"
+                    value={startForm.urlSoporte}
+                    onChange={handleStartFormChange}
+                    placeholder="https://ejemplo.com/documento-soporte"
+                  />
+
                   {firstActivityRequiresAttachment ? (
                     <>
-                      <label htmlFor="startFile">Adjuntar archivo</label>
-                      <input
-                        id="startFile"
-                        name="file"
-                        type="file"
-                        onChange={handleStartFileChange}
-                        required
-                      />
-                    </>
-                  ) : (
-                    <>
-                      <label htmlFor="startUrl">URL del documento</label>
+                      <label htmlFor="startUrl">
+                        URL del documento exigido
+                      </label>
                       <input
                         id="startUrl"
                         name="urlDocumento"
                         type="url"
                         value={startForm.urlDocumento}
                         onChange={handleStartFormChange}
+                        placeholder="https://ejemplo.com/documento-obligatorio"
+                        required
                       />
                     </>
-                  )}
+                  ) : null}
 
                   <button type="submit" disabled={startLoading}>
                     {startLoading ? "Guardando..." : "Crear solicitud"}
@@ -1970,7 +1952,18 @@ const AdminDashboard = () => {
                                   target="_blank"
                                   rel="noreferrer"
                                 >
-                                  Ver documento
+                                  Ver documento soporte
+                                </a>
+                              </p>
+                            ) : null}
+                            {registro.documentoUrl ? (
+                              <p>
+                                <a
+                                  href={registro.documentoUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  Ver documento obligatorio
                                 </a>
                               </p>
                             ) : null}
@@ -2065,24 +2058,24 @@ const AdminDashboard = () => {
                               }
                             />
 
+                            <label htmlFor={`support-url-${formKey}`}>
+                              URL del documento soporte (opcional)
+                            </label>
+                            <input
+                              id={`support-url-${formKey}`}
+                              type="url"
+                              value={formValues.urlSoporte ?? ""}
+                              onChange={(event) =>
+                                handleActivityFormChange(
+                                  formKey,
+                                  "urlSoporte",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="https://ejemplo.com/documento-soporte"
+                            />
+
                             {requiresAttachment ? (
-                              <>
-                                <label htmlFor={`file-${formKey}`}>
-                                  Adjuntar archivo
-                                </label>
-                                <input
-                                  id={`file-${formKey}`}
-                                  type="file"
-                                  onChange={(event) =>
-                                    handleActivityFileChange(
-                                      formKey,
-                                      event.target.files?.[0] ?? null,
-                                    )
-                                  }
-                                  required
-                                />
-                              </>
-                            ) : (
                               <>
                                 <label htmlFor={`url-${formKey}`}>
                                   URL del documento
@@ -2098,9 +2091,11 @@ const AdminDashboard = () => {
                                       event.target.value,
                                     )
                                   }
+                                  placeholder="https://ejemplo.com/documento-obligatorio"
+                                  required
                                 />
                               </>
-                            )}
+                            ) : null}
 
                             {isFinalEmailStep ? (
                               <div className="extra-emails">
