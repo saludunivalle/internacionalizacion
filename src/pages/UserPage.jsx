@@ -50,6 +50,14 @@ const parseDocumento = (row, index) => ({
   fechaSubida: String(pickValue(row, ["fecha_subida", "fecha"], 3) ?? ""),
 });
 
+const parseValidacionActividad = (row, index) => ({
+  id: String(pickValue(row, ["id"], 0) ?? index + 1),
+  idRegistro: String(pickValue(row, ["id_registro", "registro"], 1) ?? ""),
+  diligenciaDoc: parseBooleanFlag(
+    pickValue(row, ["diligencia_doc", "diligencia"], 2),
+  ),
+});
+
 const parseActor = (row, index) => ({
   id: String(pickValue(row, ["id"], 0) ?? index + 1),
   idActividad: String(pickValue(row, ["id_actividad", "actividad"], 1) ?? ""),
@@ -157,6 +165,30 @@ const matchesActivity = (activityRef, activity) => {
   return ref === String(activity.id) || ref === String(activity.orden);
 };
 
+const activityValidationRules = [
+  {
+    step: 2,
+    requiresDocumentConfirmation: true,
+  },
+];
+
+const getActivityValidationRule = (activity) => {
+  if (!activity) return null;
+  return (
+    activityValidationRules.find(
+      (rule) =>
+        String(rule.step) === String(activity.id) ||
+        String(rule.step) === String(activity.orden),
+    ) ?? null
+  );
+};
+
+const getBooleanDisplay = (value) => {
+  if (value === true) return "Si";
+  if (value === false) return "No";
+  return "-";
+};
+
 const UserPage = () => {
   const navigate = useNavigate();
   const { auth, logout, updateAuthUser } = useAuth();
@@ -164,6 +196,7 @@ const UserPage = () => {
   const [activities, setActivities] = useState([]);
   const [activityActors, setActivityActors] = useState([]);
   const [activityAttachments, setActivityAttachments] = useState([]);
+  const [activityValidations, setActivityValidations] = useState([]);
   const [myRecords, setMyRecords] = useState([]);
   const [mySolicitudes, setMySolicitudes] = useState([]);
   const [selectedProcessId, setSelectedProcessId] = useState("");
@@ -176,6 +209,7 @@ const UserPage = () => {
     observacion: "",
     urlSoporte: "",
     urlDocumento: "",
+    diligenciaDoc: "",
   });
 
   const activitiesByProcess = useMemo(() => {
@@ -216,6 +250,16 @@ const UserPage = () => {
     });
     return map;
   }, [activityAttachments]);
+
+  const validationsByRecord = useMemo(() => {
+    const map = new Map();
+    activityValidations.forEach((validation) => {
+      const key = String(validation.idRegistro ?? "");
+      if (!key) return;
+      map.set(key, validation);
+    });
+    return map;
+  }, [activityValidations]);
 
   const selectedActivities = useMemo(
     () => activitiesByProcess.get(String(selectedProcessId)) ?? [],
@@ -291,6 +335,11 @@ const UserPage = () => {
         "adjuntos_actividades",
         "adjuntos",
       ]);
+      const validacionesRows = getSheetRows(
+        sheetMap,
+        "VALIDACIONES_ACTIVIDAD",
+        ["validaciones_actividad", "validaciones"],
+      );
       const actoresRows = getSheetRows(sheetMap, "ACTIVIDAD_ACTOR", [
         "actividad_actor",
         "actores",
@@ -298,6 +347,7 @@ const UserPage = () => {
       const parsedProcesos = procesosRows.map(parseProceso);
       const parsedActividades = actividadesRows.map(parseActividad);
       const parsedAdjuntos = adjuntosRows.map(parseAdjunto);
+      const parsedValidaciones = validacionesRows.map(parseValidacionActividad);
       const parsedActores = actoresRows.map(parseActor);
 
       const orderedProcesos = parsedProcesos
@@ -311,6 +361,7 @@ const UserPage = () => {
       setProcesses(orderedProcesos);
       setActivities(parsedActividades);
       setActivityAttachments(parsedAdjuntos);
+      setActivityValidations(parsedValidaciones);
       setActivityActors(parsedActores);
 
       const usersRows = getSheetRows(sheetMap, "USUARIOS", ["usuarios"]);
@@ -394,6 +445,7 @@ const UserPage = () => {
       setActivities([]);
       setActivityActors([]);
       setActivityAttachments([]);
+      setActivityValidations([]);
       setMyRecords([]);
       setMySolicitudes([]);
       setSelectedProcessId("");
@@ -433,12 +485,6 @@ const UserPage = () => {
   const handleSubmit = async (event) => {
     event.preventDefault();
 
-    const cleanObservation = formData.observacion.trim();
-    if (!cleanObservation) {
-      setFormMessage("Debes escribir una observacion para crear la solicitud.");
-      return;
-    }
-
     if (!selectedProcessId) {
       setFormMessage("Selecciona un proceso antes de enviar la solicitud.");
       return;
@@ -472,6 +518,11 @@ const UserPage = () => {
       const solicitudesRows = getSheetRows(sheetMap, "SOLICITUDES", [
         "solicitudes",
       ]);
+      const validacionesRows = getSheetRows(
+        sheetMap,
+        "VALIDACIONES_ACTIVIDAD",
+        ["validaciones_actividad", "validaciones"],
+      );
 
       let currentUser = findUserByEmail(usersRows, auth.user?.email);
 
@@ -518,6 +569,14 @@ const UserPage = () => {
         ? (resolveActivity(processActivities, solicitudToUse.actividadActual) ??
           processActivities[0])
         : processActivities[0];
+      const validationRule = getActivityValidationRule(targetActivity);
+      const selectedDiligenciaDoc =
+        formData.diligenciaDoc === true || formData.diligenciaDoc === "true"
+          ? true
+          : formData.diligenciaDoc === false ||
+              formData.diligenciaDoc === "false"
+            ? false
+            : null;
       const isAdminActivity = targetActivity?.docente === false;
       requiresAttachment = targetActivity?.adjunto === true;
 
@@ -531,6 +590,19 @@ const UserPage = () => {
       if (isAdminActivity) {
         setFormMessage("Esta actividad corresponde al administrador.");
         return;
+      }
+
+      if (validationRule?.requiresDocumentConfirmation) {
+        if (selectedDiligenciaDoc === null) {
+          setFormMessage("Debes indicar si diligenciaste el formulario.");
+          return;
+        }
+        if (selectedDiligenciaDoc === false) {
+          setFormMessage(
+            "No puedes continuar hasta diligenciar el formulario obligatorio.",
+          );
+          return;
+        }
       }
 
       if (requiresAttachment && !cleanDocumentUrl) {
@@ -553,7 +625,7 @@ const UserPage = () => {
       }
 
       const nextRegistroId = getNextId(registrosRows);
-
+      const cleanObservation = formData.observacion.trim();
       const nextSolicitudId = getNextId(solicitudesRows);
       const currentTimestamp = new Date().toISOString();
       const currentDate = new Date().toISOString().slice(0, 10);
@@ -623,9 +695,29 @@ const UserPage = () => {
         );
       }
 
+      if (validationRule?.requiresDocumentConfirmation) {
+        const nextValidationId = getNextId(validacionesRows);
+        await apiPost(
+          "/api/sheets/VALIDACIONES_ACTIVIDAD/rows",
+          {
+            values: [
+              nextValidationId,
+              String(nextRegistroId),
+              String(selectedDiligenciaDoc === true),
+            ],
+          },
+          auth.token,
+        );
+      }
+
       const refreshSheetMap = await apiGetAllSheets(auth.token);
       hydrateFromSheets(refreshSheetMap);
-      setFormData({ observacion: "", urlSoporte: "", urlDocumento: "" });
+      setFormData({
+        observacion: "",
+        urlSoporte: "",
+        urlDocumento: "",
+        diligenciaDoc: "",
+      });
       setFormMessage(
         solicitudToUse
           ? "Registro enviado correctamente para la actividad."
@@ -736,6 +828,10 @@ const UserPage = () => {
               String(activity.id) === String(currentActivity.id);
             const isAdminActivity = activity.docente === false;
             const requiresAttachment = activity.adjunto === true;
+            const validationRule = getActivityValidationRule(activity);
+            const validationRecord = validationsByRecord.get(
+              String(activityRecord?.id ?? ""),
+            );
             const enabled =
               (isCurrent || Boolean(activityRecord)) && !isAdminActivity;
             const actorNames = (actorsByActivity.get(String(activity.id)) ?? [])
@@ -779,30 +875,71 @@ const UserPage = () => {
 
                   {isCurrent && !activityRecord && !isAdminActivity ? (
                     <form className="request-form" onSubmit={handleSubmit}>
-                      <label htmlFor="observacion">
-                        Observacion de la actividad
-                      </label>
-                      <textarea
-                        id="observacion"
-                        name="observacion"
-                        placeholder="Escribe un resumen para esta actividad"
-                        value={formData.observacion}
-                        onChange={handleChange}
-                        rows={4}
-                        required
-                      />
+                      {validationRule?.requiresDocumentConfirmation ? (
+                        <fieldset className="validation-fieldset">
+                          <legend>
+                            ¿Usted diligenció el formulario de solicitud de
+                            nuevo convenio?
+                          </legend>
+                          <label htmlFor="diligenciaDoc-si">
+                            <input
+                              id="diligenciaDoc-si"
+                              type="radio"
+                              name="diligenciaDoc"
+                              value="true"
+                              checked={formData.diligenciaDoc === "true"}
+                              onChange={handleChange}
+                              required
+                            />
+                            Sí
+                          </label>
+                          <label htmlFor="diligenciaDoc-no">
+                            <input
+                              id="diligenciaDoc-no"
+                              type="radio"
+                              name="diligenciaDoc"
+                              value="false"
+                              checked={formData.diligenciaDoc === "false"}
+                              onChange={handleChange}
+                            />
+                            No
+                          </label>
+                        </fieldset>
+                      ) : (
+                        <>
+                          <label htmlFor="observacion">
+                            Observacion de la actividad
+                          </label>
+                          <textarea
+                            id="observacion"
+                            name="observacion"
+                            placeholder="Escribe un resumen para esta actividad"
+                            value={formData.observacion}
+                            onChange={handleChange}
+                            rows={4}
+                          />
 
-                      <label htmlFor="urlSoporte">
-                        URL de soporte (opcional)
-                      </label>
-                      <input
-                        id="urlSoporte"
-                        name="urlSoporte"
-                        type="url"
-                        placeholder="https://ejemplo.com/documento-soporte"
-                        value={formData.urlSoporte}
-                        onChange={handleChange}
-                      />
+                          <label htmlFor="urlSoporte">
+                            URL de soporte (opcional)
+                          </label>
+                          <input
+                            id="urlSoporte"
+                            name="urlSoporte"
+                            type="url"
+                            placeholder="https://ejemplo.com/documento-soporte"
+                            value={formData.urlSoporte}
+                            onChange={handleChange}
+                          />
+                        </>
+                      )}
+
+                      {validationRule?.requiresDocumentConfirmation &&
+                      formData.diligenciaDoc === "false" ? (
+                        <p className="message error">
+                          No puedes continuar hasta diligenciar el formulario
+                          obligatorio.
+                        </p>
+                      ) : null}
 
                       {requiresAttachment ? (
                         <>
@@ -821,7 +958,14 @@ const UserPage = () => {
                         </>
                       ) : null}
 
-                      <button type="submit" disabled={formLoading}>
+                      <button
+                        type="submit"
+                        disabled={
+                          formLoading ||
+                          (validationRule?.requiresDocumentConfirmation &&
+                            formData.diligenciaDoc === "false")
+                        }
+                      >
                         {formLoading ? "Guardando..." : "Completar"}
                       </button>
                     </form>
@@ -839,6 +983,12 @@ const UserPage = () => {
                         <strong>Observacion:</strong>{" "}
                         {activityRecord.observacion || "-"}
                       </p>
+                      {validationRecord ? (
+                        <p>
+                          <strong>Diligenció documento:</strong>{" "}
+                          {getBooleanDisplay(validationRecord.diligenciaDoc)}
+                        </p>
+                      ) : null}
                       <p>
                         <strong>Aprobado:</strong>{" "}
                         {String(activityRecord.aprobado).toLowerCase() ===

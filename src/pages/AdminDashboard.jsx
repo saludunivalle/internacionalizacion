@@ -59,6 +59,14 @@ const parseDocumento = (row, index) => ({
   fecha_subida: String(pickValue(row, ["fecha_subida", "fecha"], 3) ?? ""),
 });
 
+const parseValidacionActividad = (row, index) => ({
+  id: String(pickValue(row, ["id"], 0) ?? index + 1),
+  idRegistro: String(pickValue(row, ["id_registro", "registro"], 1) ?? ""),
+  diligenciaDoc: parseBooleanFlag(
+    pickValue(row, ["diligencia_doc", "diligencia"], 2),
+  ),
+});
+
 const parseActor = (row, index) => ({
   id: String(pickValue(row, ["id"], 0) ?? index + 1),
   idActividad: String(pickValue(row, ["id_actividad", "actividad"], 1) ?? ""),
@@ -231,6 +239,24 @@ const matchesActivity = (activityRef, activity) => {
   return ref === String(activity.id) || ref === String(activity.orden);
 };
 
+const activityValidationRules = [
+  {
+    step: 2,
+    requiresDocumentConfirmation: true,
+  },
+];
+
+const getActivityValidationRule = (activity) => {
+  if (!activity) return null;
+  return (
+    activityValidationRules.find(
+      (rule) =>
+        String(rule.step) === String(activity.id) ||
+        String(rule.step) === String(activity.orden),
+    ) ?? null
+  );
+};
+
 const getNextActivityId = (processActivities, activityId) => {
   if (!Array.isArray(processActivities) || processActivities.length === 0) {
     return String(activityId ?? "");
@@ -256,6 +282,7 @@ const AdminDashboard = () => {
   const [activities, setActivities] = useState([]);
   const [activityActors, setActivityActors] = useState([]);
   const [activityAttachments, setActivityAttachments] = useState([]);
+  const [activityValidations, setActivityValidations] = useState([]);
   const [solicitudes, setSolicitudes] = useState([]);
   const [records, setRecords] = useState([]);
   const [initialDataBySolicitud, setInitialDataBySolicitud] = useState(
@@ -424,6 +451,10 @@ const AdminDashboard = () => {
     ]);
     const registrosRows = getSheetRows(sheetMap, "REGISTROS", ["registros"]);
     const documentosRows = getSheetRows(sheetMap, "DOCUMENTOS", ["documentos"]);
+    const validacionesRows = getSheetRows(sheetMap, "VALIDACIONES_ACTIVIDAD", [
+      "validaciones_actividad",
+      "validaciones",
+    ]);
     const solicitudesRows = getSheetRows(sheetMap, "SOLICITUDES", [
       "solicitudes",
     ]);
@@ -447,6 +478,7 @@ const AdminDashboard = () => {
     const parsedUsuarios = usuariosRows.map(parseUsuario);
     const parsedRegistros = registrosRows.map(parseRegistro);
     const parsedDocumentos = documentosRows.map(parseDocumento);
+    const parsedValidaciones = validacionesRows.map(parseValidacionActividad);
     const parsedDatosIniciales = datosInicialesRows.map(parseDatosIniciales);
 
     const orderedProcesos = parsedProcesos
@@ -461,6 +493,7 @@ const AdminDashboard = () => {
     setPrograms(parsedProgramas);
     setActivities(parsedActividades);
     setActivityAttachments(parsedAdjuntos);
+    setActivityValidations(parsedValidaciones);
     setActivityActors(parsedActores);
     setSolicitudes(parsedSolicitudes);
 
@@ -552,6 +585,7 @@ const AdminDashboard = () => {
       setActivities([]);
       setActivityActors([]);
       setActivityAttachments([]);
+      setActivityValidations([]);
       setSolicitudes([]);
       setRecords([]);
       setPrograms([]);
@@ -1120,9 +1154,16 @@ const AdminDashboard = () => {
     if (!selectedSolicitud || !activity) return;
     const key = String(activity.id);
     const formValues = activityForms[key] ?? {};
-    const observacion = String(formValues.observacion ?? "").trim();
     const supportUrl = String(formValues.urlSoporte ?? "").trim();
     const urlDocumento = String(formValues.urlDocumento ?? "").trim();
+    const validationRule = getActivityValidationRule(activity);
+    const diligenciaDoc =
+      formValues.diligenciaDoc === true || formValues.diligenciaDoc === "true"
+        ? true
+        : formValues.diligenciaDoc === false ||
+            formValues.diligenciaDoc === "false"
+          ? false
+          : null;
     const isDocenteActivity = activity.docente === true;
     const requiresAttachment = activity.adjunto === true;
     const needsInitialData = isInitialStep(activity, selectedSolicitud);
@@ -1160,11 +1201,22 @@ const AdminDashboard = () => {
       return;
     }
 
-    if (!observacion) {
-      setModalMessage("Debes escribir una observacion para completar el paso.");
-      setModalMessageType("error");
-      return;
+    if (validationRule?.requiresDocumentConfirmation) {
+      if (diligenciaDoc === null) {
+        setModalMessage("Debes indicar si diligenciaste el formulario.");
+        setModalMessageType("error");
+        return;
+      }
+      if (diligenciaDoc === false) {
+        setModalMessage(
+          "No puedes continuar hasta diligenciar el formulario obligatorio.",
+        );
+        setModalMessageType("error");
+        return;
+      }
     }
+
+    const observacion = String(formValues.observacion ?? "").trim();
 
     if (requiresAttachment && !urlDocumento) {
       setModalMessage(
@@ -1213,6 +1265,10 @@ const AdminDashboard = () => {
         "documentos",
       ]);
       const registrosRows = getSheetRows(sheetMap, "REGISTROS", ["registros"]);
+      const validacionesRows = getSheetRows(sheetMap, "VALIDACIONES_ACTIVIDAD", [
+        "validaciones_actividad",
+        "validaciones",
+      ]);
       const datosInicialesRows = getSheetRows(
         sheetMap,
         "DATOS_INICIALES_SOLICITUD",
@@ -1263,7 +1319,29 @@ const AdminDashboard = () => {
         );
       }
 
-      const fecha = new Date().toISOString().slice(0, 10);
+      if (validationRule?.requiresDocumentConfirmation) {
+        const nextValidationId = getNextId(validacionesRows);
+        await apiPost(
+          "/api/sheets/VALIDACIONES_ACTIVIDAD/rows",
+          {
+            values: [
+              nextValidationId,
+              String(nextRegistroId),
+              String(diligenciaDoc === true),
+            ],
+          },
+          auth.token,
+        );
+      }
+
+      const hoy = new Date();
+
+      const dia = String(hoy.getDate()).padStart(2, "0");
+      const mes = String(hoy.getMonth() + 1).padStart(2, "0"); // Sumamos 1 porque enero es 0
+      const ano = String(hoy.getFullYear()).slice(-2); // Toma los últimos 2 dígitos
+
+      const fechaFormateada = `${dia}/${mes}/${ano}`;
+
       const processActivitiesForUpdate = activitiesByProcess.get(
         String(selectedSolicitud.idProceso ?? ""),
       );
@@ -1273,7 +1351,7 @@ const AdminDashboard = () => {
       );
       await apiPatch(
         `/api/sheets/solicitudes/${selectedSolicitud.id}/actividad`,
-        { actividad_actual: nextActivityId, fecha },
+        { actividad_actual: nextActivityId, fecha: fechaFormateada },
         auth.token,
       );
 
@@ -2041,39 +2119,96 @@ const AdminDashboard = () => {
                                 />
                               </>
                             ) : null}
+                            {getActivityValidationRule(activity)?.requiresDocumentConfirmation ? (
+                              <fieldset className="validation-fieldset">
+                                <legend>
+                                  ¿Usted diligenció el formulario de solicitud
+                                  de nuevo convenio?
+                                </legend>
+                                <label htmlFor={`diligenciaDoc-si-${formKey}`}>
+                                  <input
+                                    id={`diligenciaDoc-si-${formKey}`}
+                                    type="radio"
+                                    name={`diligenciaDoc-${formKey}`}
+                                    value="true"
+                                    checked={
+                                      formValues.diligenciaDoc === "true"
+                                    }
+                                    onChange={(event) =>
+                                      handleActivityFormChange(
+                                        formKey,
+                                        "diligenciaDoc",
+                                        event.target.value,
+                                      )
+                                    }
+                                    required
+                                  />
+                                  Sí
+                                </label>
+                                <label htmlFor={`diligenciaDoc-no-${formKey}`}>
+                                  <input
+                                    id={`diligenciaDoc-no-${formKey}`}
+                                    type="radio"
+                                    name={`diligenciaDoc-${formKey}`}
+                                    value="false"
+                                    checked={
+                                      formValues.diligenciaDoc === "false"
+                                    }
+                                    onChange={(event) =>
+                                      handleActivityFormChange(
+                                        formKey,
+                                        "diligenciaDoc",
+                                        event.target.value,
+                                      )
+                                    }
+                                  />
+                                  No
+                                </label>
+                              </fieldset>
+                            ) : (
+                              <>
+                                <label htmlFor={`observacion-${formKey}`}>
+                                  Observacion de la actividad
+                                </label>
+                                <textarea
+                                  id={`observacion-${formKey}`}
+                                  rows={3}
+                                  value={formValues.observacion ?? ""}
+                                  onChange={(event) =>
+                                    handleActivityFormChange(
+                                      formKey,
+                                      "observacion",
+                                      event.target.value,
+                                    )
+                                  }
+                                />
 
-                            <label htmlFor={`observacion-${formKey}`}>
-                              Observacion de la actividad
-                            </label>
-                            <textarea
-                              id={`observacion-${formKey}`}
-                              rows={3}
-                              value={formValues.observacion ?? ""}
-                              onChange={(event) =>
-                                handleActivityFormChange(
-                                  formKey,
-                                  "observacion",
-                                  event.target.value,
-                                )
-                              }
-                            />
+                                <label htmlFor={`support-url-${formKey}`}>
+                                  URL del documento soporte (opcional)
+                                </label>
+                                <input
+                                  id={`support-url-${formKey}`}
+                                  type="url"
+                                  value={formValues.urlSoporte ?? ""}
+                                  onChange={(event) =>
+                                    handleActivityFormChange(
+                                      formKey,
+                                      "urlSoporte",
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="https://ejemplo.com/documento-soporte"
+                                />
+                              </>
+                            )}
 
-                            <label htmlFor={`support-url-${formKey}`}>
-                              URL del documento soporte (opcional)
-                            </label>
-                            <input
-                              id={`support-url-${formKey}`}
-                              type="url"
-                              value={formValues.urlSoporte ?? ""}
-                              onChange={(event) =>
-                                handleActivityFormChange(
-                                  formKey,
-                                  "urlSoporte",
-                                  event.target.value,
-                                )
-                              }
-                              placeholder="https://ejemplo.com/documento-soporte"
-                            />
+                            {getActivityValidationRule(activity)?.requiresDocumentConfirmation &&
+                            formValues.diligenciaDoc === "false" ? (
+                              <p className="message error">
+                                No puedes continuar hasta diligenciar el
+                                formulario obligatorio.
+                              </p>
+                            ) : null}
 
                             {requiresAttachment ? (
                               <>
@@ -2135,7 +2270,14 @@ const AdminDashboard = () => {
                               </div>
                             ) : null}
 
-                            <button type="submit" disabled={isSubmitting}>
+                            <button
+                              type="submit"
+                              disabled={
+                                isSubmitting ||
+                                (getActivityValidationRule(activity)?.requiresDocumentConfirmation &&
+                                  formValues.diligenciaDoc === "false")
+                              }
+                            >
                               {isSubmitting ? "Guardando..." : "Completar paso"}
                             </button>
                           </form>
